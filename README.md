@@ -175,6 +175,11 @@ recordCall 保存时的模型名解析（resolveModelName）：
 
 ## 更新日志
 
+### v1.3.4
+
+- 修复仪表盘弹窗布局损坏：`position: fixed` 导致对话框尺寸和定位异常，改为 flexbox 居中
+- 移除 `.tks-dashboard` 内部滚动，统一由 `.b3-dialog__body` 处理滚动，避免双滚动条
+
 ### v1.3.3
 
 - 修复模型名称识别不一致：`resolveModelName` 和 `analyzeResponse` 中全局配置仍优先于 SSE/请求体的问题，统一为「SSE 响应 → 请求体 → 全局配置」优先级
