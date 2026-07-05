@@ -583,21 +583,17 @@ const T = require("siyuan"),
   margin-top: 8px;
 }
 
-/* ─── 弹窗居中 + 滚动支持 ─── */
-.b3-dialog:has([id^="tks-"]) {
-  align-items: center !important;
-  justify-content: center !important;
-}
-
+/* ─── 弹窗位置 + 滚动支持 ─── */
+/* 仅设置初始 margin-top 使弹窗下移，不干扰思源 Dialog 拖拽机制 */
 .b3-dialog:has([id^="tks-"]) .b3-dialog__container {
   max-width: 96vw;
   max-height: 92vh;
-  margin: auto !important;
+  margin-top: 5vh;
 }
 
 .b3-dialog:has([id^="tks-"]) .b3-dialog__body {
-  max-height: calc(92vh - 130px);
-  overflow-y: auto !important;
+  max-height: calc(82vh - 120px);
+  overflow-y: auto;
 }
 
 /* 移除仪表盘内部滚动，统一交给 dialog body */
@@ -618,7 +614,7 @@ const T = require("siyuan"),
 `,
   E = "data/storage/siyuan-token-stats/data.json",
   oe = "data/storage/siyuan-token-stats/data.json.bak",
-  q = "1.3.4",
+  q = "1.3.5",
   I = {
     matchByUrl: !0,
     interceptExternalAPIs: !0,
