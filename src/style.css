@@ -1,0 +1,620 @@
+/* ═══════════════════════════════════════════
+   Token Statistics Plugin - Styles
+   使用 SiYuan CSS 变量，自动适配明暗主题
+   ═══════════════════════════════════════════ */
+
+/* ─── 仪表盘 ─── */
+.tks-dashboard {
+  padding: 16px 20px;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+}
+
+.tks-summary-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+@media (max-width: 800px) {
+  .tks-summary-cards {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* ─── 移动端适配（含鸿蒙 NEXT） ─── */
+@media (max-width: 600px) {
+  .tks-dashboard {
+    padding: 10px 12px;
+  }
+
+  .tks-summary-cards {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+  }
+
+  .tks-card {
+    padding: 8px 10px;
+  }
+
+  .tks-card-icon {
+    font-size: 18px;
+  }
+
+  .tks-card-value {
+    font-size: 14px;
+  }
+
+  .tks-card-label {
+    font-size: 10px;
+  }
+
+  .tks-section-title {
+    font-size: 13px;
+  }
+
+  /* Key 统计条在窄屏下改为更紧凑布局 */
+  .tks-key-stat-header {
+    flex-wrap: wrap;
+  }
+
+  /* 模型分布条在窄屏下名称缩短 */
+  .tks-model-name {
+    width: 80px;
+    font-size: 11px;
+  }
+
+  .tks-model-detail {
+    width: 100px;
+    font-size: 10px;
+  }
+
+  /* 记录表横向滚动 */
+  .tks-records-table-wrap {
+    overflow-x: auto;
+  }
+
+  .tks-records-table {
+    min-width: 600px;
+  }
+
+  /* Key 管理项垂直布局 */
+  .tks-key-item {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .tks-key-actions {
+    margin-left: 0;
+    margin-top: 8px;
+    justify-content: flex-end;
+  }
+
+  .tks-key-quota {
+    flex-wrap: wrap;
+  }
+
+  .tks-quota-bar {
+    width: 100%;
+  }
+
+  /* Key 编辑器双列改单列 */
+  .tks-form-row-2col {
+    grid-template-columns: 1fr;
+  }
+
+  /* 仪表盘操作按钮 */
+  .tks-dashboard-actions {
+    flex-wrap: wrap;
+  }
+}
+
+.tks-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--b3-theme-surface);
+  border: 1px solid var(--b3-border-color);
+  border-radius: 8px;
+}
+
+.tks-card-icon {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.tks-card-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--b3-theme-primary);
+  line-height: 1.2;
+}
+
+.tks-card-label {
+  font-size: 11px;
+  color: var(--b3-theme-on-surface);
+  margin-top: 2px;
+}
+
+/* ─── 区块 ─── */
+.tks-section {
+  margin-bottom: 20px;
+}
+
+.tks-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--b3-theme-on-background);
+  margin: 0 0 10px 0;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--b3-border-color);
+}
+
+/* ─── API Key 统计条 ─── */
+.tks-key-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tks-key-stat {
+  padding: 10px 12px;
+  background: var(--b3-theme-surface);
+  border: 1px solid var(--b3-border-color);
+  border-radius: 6px;
+  transition: border-color 0.2s;
+}
+
+.tks-key-stat-alert {
+  border-color: var(--b3-theme-warning, #d97706);
+}
+
+.tks-key-stat-exceeded {
+  border-color: var(--b3-theme-error);
+}
+
+.tks-key-stat-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.tks-key-stat-name {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--b3-theme-on-background);
+}
+
+.tks-key-stat-requests {
+  font-size: 12px;
+  color: var(--b3-theme-on-surface);
+}
+
+.tks-key-stat-bar {
+  height: 8px;
+  background: var(--b3-theme-background-light, rgba(0, 0, 0, 0.06));
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+
+.tks-key-stat-fill {
+  height: 100%;
+  background: var(--b3-theme-primary);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.tks-key-stat-fill.alert {
+  background: var(--b3-theme-warning, #d97706);
+}
+
+.tks-key-stat-fill.exceeded {
+  background: var(--b3-theme-error);
+}
+
+.tks-key-stat-detail {
+  font-size: 11px;
+  color: var(--b3-theme-on-surface);
+}
+
+/* ─── Token 趋势控制 ─── */
+.tks-trend-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--b3-theme-on-surface);
+}
+
+.tks-trend-controls input[type="date"] {
+  width: 130px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.tks-trend-controls .b3-select {
+  width: auto;
+  min-width: 70px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.tks-trend-controls .b3-button {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.tks-empty-chart {
+  text-align: center;
+  padding: 30px;
+  color: var(--b3-theme-on-surface);
+  font-size: 12px;
+  background: var(--b3-theme-surface);
+  border: 1px dashed var(--b3-border-color);
+  border-radius: 6px;
+}
+
+.tks-card-global .tks-card-value {
+  color: var(--b3-theme-warning, #d97706);
+}
+
+/* ─── 每日趋势图 ─── */
+.tks-daily-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 140px;
+  padding: 10px;
+  background: var(--b3-theme-surface);
+  border: 1px solid var(--b3-border-color);
+  border-radius: 6px;
+  overflow-x: auto;
+}
+
+.tks-daily-bar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+  min-width: 40px;
+  height: 100%;
+  justify-content: flex-end;
+}
+
+.tks-daily-value {
+  font-size: 10px;
+  color: var(--b3-theme-on-surface);
+  margin-bottom: 4px;
+  white-space: nowrap;
+}
+
+.tks-daily-col {
+  width: 70%;
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  background: var(--b3-theme-background-light, rgba(0, 0, 0, 0.04));
+  border-radius: 3px 3px 0 0;
+}
+
+.tks-daily-fill {
+  width: 100%;
+  background: linear-gradient(180deg, var(--b3-theme-primary), var(--b3-theme-primary-light, rgba(0, 0, 0, 0.2)));
+  border-radius: 3px 3px 0 0;
+  transition: height 0.3s ease;
+}
+
+.tks-daily-date {
+  font-size: 10px;
+  color: var(--b3-theme-on-surface);
+  margin-top: 4px;
+}
+
+/* ─── 模型分布 ─── */
+.tks-model-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tks-model-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.tks-model-name {
+  width: 150px;
+  flex-shrink: 0;
+  color: var(--b3-theme-on-background);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tks-model-bar-track {
+  flex: 1;
+  height: 18px;
+  background: var(--b3-theme-background-light, rgba(0, 0, 0, 0.06));
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.tks-model-bar-fill {
+  height: 100%;
+  background: var(--b3-theme-primary);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+  opacity: 0.7;
+}
+
+.tks-model-detail {
+  width: 180px;
+  flex-shrink: 0;
+  color: var(--b3-theme-on-surface);
+  font-size: 11px;
+  text-align: right;
+}
+
+/* ─── 请求记录表 ─── */
+.tks-records-table-wrap {
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid var(--b3-border-color);
+  border-radius: 6px;
+}
+
+.tks-records-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.tks-records-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.tks-records-table th {
+  background: var(--b3-theme-surface);
+  color: var(--b3-theme-on-surface);
+  padding: 8px 10px;
+  text-align: left;
+  font-weight: 600;
+  border-bottom: 1px solid var(--b3-border-color);
+  white-space: nowrap;
+}
+
+.tks-records-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--b3-border-color);
+  color: var(--b3-theme-on-background);
+  white-space: nowrap;
+}
+
+.tks-records-table tbody tr:hover {
+  background: var(--b3-list-hover, rgba(0, 0, 0, 0.03));
+}
+
+/* ─── 仪表盘操作按钮 ─── */
+.tks-dashboard-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding-top: 10px;
+  border-top: 1px solid var(--b3-border-color);
+}
+
+/* ─── API Key 管理对话框 ─── */
+.tks-key-mgr {
+  padding: 16px 20px;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.tks-key-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--b3-border-color);
+}
+
+.tks-key-toolbar > button {
+  margin-right: 6px;
+}
+
+.tks-key-hint {
+  font-size: 12px;
+  color: var(--b3-theme-on-surface);
+  margin-left: auto;
+}
+
+.tks-key-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tks-key-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  background: var(--b3-theme-surface);
+  border: 1px solid var(--b3-border-color);
+  border-radius: 6px;
+}
+
+.tks-key-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.tks-key-name {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--b3-theme-on-background);
+  margin-bottom: 4px;
+}
+
+.tks-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 10px;
+  border-radius: 3px;
+  background: var(--b3-theme-primary-light, rgba(0, 0, 0, 0.08));
+  color: var(--b3-theme-primary);
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+.tks-badge-off {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--b3-theme-on-surface);
+}
+
+.tks-key-detail {
+  font-size: 11px;
+  color: var(--b3-theme-on-surface);
+  display: flex;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.tks-key-provider {
+  padding: 0 4px;
+  border-radius: 2px;
+  background: var(--b3-theme-background-light, rgba(0, 0, 0, 0.06));
+  white-space: nowrap;
+}
+
+.tks-key-url {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--b3-theme-on-surface);
+}
+
+.tks-key-quota {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tks-quota-bar {
+  width: 120px;
+  height: 6px;
+  background: var(--b3-theme-background-light, rgba(0, 0, 0, 0.06));
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.tks-quota-fill {
+  height: 100%;
+  background: var(--b3-theme-primary);
+  border-radius: 3px;
+}
+
+.tks-quota-fill.tks-quota-alert {
+  background: var(--b3-theme-warning, #d97706);
+}
+
+.tks-quota-text {
+  font-size: 11px;
+  color: var(--b3-theme-on-surface);
+  white-space: nowrap;
+}
+
+.tks-key-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+  margin-left: 10px;
+}
+
+/* ─── Key 编辑器表单 ─── */
+.tks-key-editor {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.tks-form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tks-form-row label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--b3-theme-on-background);
+}
+
+.tks-form-row .b3-text-field,
+.tks-form-row .b3-select {
+  width: 100%;
+}
+
+.tks-form-row-2col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.tks-form-hint {
+  font-size: 11px;
+  color: var(--b3-theme-on-surface);
+}
+
+.tks-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* ─── 弹窗位置 + 滚动支持 ─── */
+/* 使用 overlay 的 align-items + padding-top 控制垂直位置，避免与 Dialog 拖拽时设置的 inline margin 冲突 */
+.b3-dialog:has([id^="tks-"]) {
+  align-items: flex-start;
+  padding-top: 5vh;
+}
+
+.b3-dialog:has([id^="tks-"]) .b3-dialog__container {
+  max-width: 96vw;
+  max-height: 92vh;
+}
+
+.b3-dialog:has([id^="tks-"]) .b3-dialog__body {
+  max-height: calc(82vh - 120px);
+  overflow-y: auto;
+}
+
+/* 移除仪表盘内部滚动，统一交给 dialog body */
+.tks-dashboard {
+  max-height: none;
+  overflow-y: visible;
+}
+
+/* 滚动条样式 */
+.b3-dialog:has([id^="tks-"]) .b3-dialog__body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.b3-dialog:has([id^="tks-"]) .b3-dialog__body::-webkit-scrollbar-thumb {
+  background: var(--b3-theme-on-surface-light, rgba(0, 0, 0, 0.2));
+  border-radius: 3px;
+}
