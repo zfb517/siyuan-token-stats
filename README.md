@@ -1,11 +1,15 @@
 # SiYuan Token Statistics
 
-> 思源笔记 Token 用量统计插件 — 统计思源智能体及第三方插件的 Token 消耗，支持每个 API Key 单独设置限额、自定义提醒阈值、限额自动切断，以及 S3/WebDAV 云同步数据合并。
+> 思源笔记 Token 用量统计插件 — 统计思源内置 AI 功能（智能体、编辑器 AI）及第三方插件的 Token 消耗，支持每个 API Key 单独设置限额、自定义提醒阈值、限额自动切断，以及 S3/WebDAV 云同步数据合并。
+>
+> **架构说明**：思源笔记的所有 AI 功能（智能体、编辑器 AI、嵌入）均依赖用户在 `设置 → AI` 中配置的第三方 Provider（API Key + Base URL + 模型）。思源 Go 后端负责：读取 Provider 配置 → 向第三方 API 发送真实请求 → 将响应流以 SSE 格式转发给前端。本插件通过拦截前端 fetch 请求来统计 Token 用量。
 
 ## 功能特性
 
-- **按 API Base URL 匹配**：所有 API Key 均按 Base URL 匹配，不再区分"内置"与"外部"。思源 AI 可配置为 `http://127.0.0.1:6806/api/ai/` 或 `/api/ai/`，第三方 API 填写对应 URL
-- **模型自动识别**：按优先级从高到低依次尝试：请求体 `model` 字段 → SSE 响应中的模型名 → 思源全局 AI 配置。一把 Key 对应多个模型时无需逐个配置
+- **按真实 API Key 匹配**：插件会读取思源 AI 配置中当前选中 Provider 的 `apiKey`，优先匹配你在插件中保存的相同 Key，实现按真实 API Key 分账统计（无论请求是从思源内置 AI 还是第三方插件发出）
+- **多 Key 同 URL 时按模型区分**：当多个 API Key 使用相同 Base URL 时，可在每个 Key 中设置"关联模型"。无论是思源内置 AI 还是第三方插件，都会按请求体中实际的模型信息匹配到对应 Key
+- **按 API Base URL 匹配**：作为兜底方案，所有 API Key 可配置 Base URL 用于匹配。思源 AI 请求可配置为 `http://127.0.0.1:6806/api/ai/`，第三方 API 填写对应的外部 URL
+- **模型自动识别**：按优先级从高到低依次尝试：SSE 响应中的模型名 → 请求体 `model` 字段 → 思源 Provider 配置。一把 Key 对应多个模型时无需逐个配置
 - **自定义提供商名称**：每个 API Key 的"提供商"字段可任意填写（如 OpenAI、DeepSeek、华为云、SiYuan 等），仅用于显示和图标
 - **双匹配策略**：同时支持按 URL 匹配和按请求头中的 API Key 匹配
 - **Token 统计**：优先从 API 响应中提取精确的 token 用量（SSE `event:usage` 的 `promptTokens` / `completionTokens`），无 usage 字段时自动估算
@@ -14,6 +18,8 @@
   - 每个 API Key 可单独设置 Token 限额（0 = 不限）
   - 每个 API Key 可自定义提醒阈值百分比（0-100%）
   - 支持启用/禁用、按 Key 或 URL 匹配
+  - 支持为每个 Key 设置“关联模型”，多个 Key 同 URL 时按模型精确区分
+  - 支持导出/导入 API Key 配置（含完整 Key），方便备份与迁移
 - **限额自动切断**（两道防线）：
   - **请求前预检**：当前用量 + 预估输入超限时，直接返回 HTTP 429，不发网络请求，零 token 消耗
   - **流式途中检测**：SSE 生成过程中检测到超限时标记本次请求为中断（注：取消的是插件克隆流，原始响应流可能仍在传输，实际 token 可能已被计费）
@@ -27,6 +33,7 @@
   - 每日 Token 趋势柱状图（近 14 天）
   - 模型用量分布
   - 最近请求记录表
+  - 刷新按钮仅重载数据，不重置滚动位置与弹窗位置
 - **弹窗居中**：仪表盘和 API Key 管理弹窗默认屏幕居中显示，便于操作
 - **数据管理**：导出 JSON、清除记录、自动备份
 
@@ -54,13 +61,15 @@
 
 | 场景 | 推荐填写 | 说明 |
 |------|----------|------|
-| 思源智能体使用第三方模型 | **第三方 API 地址**（如 `https://api.openai.com/v1`） | 第一优先级精确匹配，能区分不同 provider |
-| 思源内置 AI（内核模型） | `/api/ai/` 或 `http://127.0.0.1:6806/api/ai/` | 内置 provider 无第三方 baseURL，靠请求 URL 匹配 |
-| 只有一把 Key，不关心配额区分 | `/api/ai/` | 兜底逻辑保证 token 照样统计 |
+| 思源内置 AI（智能体 / 编辑器 AI） | **第三方 API 地址**（如 `https://api.openai.com/v1`） | 思源 AI 全部依赖第三方 Provider 工作，第一优先级按 Provider 的 apiKey 精确匹配，能区分不同 Provider |
+| 只想用兜底匹配，不关心配额区分 | `/api/ai/` 或留空 | 兜底逻辑会按请求 URL 匹配，token 照样统计但不区分具体 Key |
+| 第三方插件（SiYuan Copilot 等） | 插件实际调用的 API 地址 | 第三方插件通过请求头中的 API Key 直接匹配 |
 
-**匹配优先级**：思源 AI 配置中 provider 的 baseURL → 请求 URL 本身 → 名称/提供商模糊匹配 → 默认记录（标记为未知 Key）
+**匹配原理**（思源内置 AI 请求，包括智能体和编辑器 AI）：插件读取思源配置中当前 Provider 的 `apiKey` 精确匹配插件 Key → 按用户 Key 的"关联模型"匹配 → 按 Provider 的 `baseURL` + "关联模型"匹配 → 按请求 URL 兜底匹配 → 默认记录（标记为未知 Key）
 
-**关键点**：思源智能体即使配了第三方模型，前端请求仍然发往 `/api/ai/agent/chat`（思源内核转发），但思源 AI 配置中该 provider 的 `baseURL` 是第三方地址。插件第一优先级正是用这个第三方地址去匹配你的 Key。
+**匹配原理**（第三方插件直接访问外部 API）：请求体模型名 → 用户 Key 的"关联模型" → 请求头中的 API Key → 请求 URL 本身 → 默认记录
+
+**关键点**：思源内置 AI（包括智能体）的请求在前端看起来发往 `/api/ai/agent/chat` 或 `/api/ai/chatGPT`（思源内核端点），但思源 Go 后端会根据你配置的 Provider 向真正的第三方 API 发起请求。插件通过读取思源配置中的 `provider.apiKey` 来精确匹配，与第三方插件按请求头 Key 匹配在逻辑上是等价的。
 
 ### 配额与限额
 
@@ -126,6 +135,30 @@
 
 ## 技术架构
 
+### 思源 AI 请求流程（基于思源 GitHub 源码）
+
+```
+思源前端 UI
+  │  fetch("/api/ai/agent/chat", { body: { sessionID, message, ... } })
+  ▼
+思源 Go 后端 (kernel/api/agent.go, kernel/model/ai.go)
+  │  读取 Conf.AI.Providers → 找到选中的 Provider
+  │  使用 provider.APIKey + provider.BaseURL 创建 OpenAI 客户端
+  │  向第三方 API 发送真实 HTTP 请求 (e.g. https://api.openai.com/v1/chat/completions)
+  ▼
+第三方 API 服务器 (OpenAI / DeepSeek / 硅基流动 / ...)
+  │  返回 SSE 流 (content, usage events)
+  ▼
+思源 Go 后端 — SSE 转发给前端
+  │  event:content, event:usage, event:done, ...
+  ▼
+思源前端 UI — 展示 AI 回复
+```
+
+> **关键**：本插件运行在思源前端，只能拦截前端 ↔ 后端之间的 fetch 请求。插件通过读取 `window.siyuan.config.ai`（即思源 Go 后端的 `Conf.AI` 配置）来获知当前使用的是哪个 Provider 的 API Key 和模型，从而实现按真实 API Key 分账。
+
+### 插件内部模块
+
 ```
 index.js  插件主文件（打包后单文件），包含 7 个核心模块：
 ├── Store (ae)           数据持久化（思源文件 API）+ 云同步合并 + 记录去重
@@ -140,7 +173,9 @@ index.js  插件主文件（打包后单文件），包含 7 个核心模块：
 ### 核心流程
 
 ```
-思源 AI 请求 → window.fetch 拦截 → identifyAiCall() 识别 Key 和模型
+前端 fetch 请求 → window.fetch 拦截 → identifyAiCall() 识别 Key 和模型
+  ├── 思源内置 AI (/api/ai/...): 读取思源配置 → 按 provider.apiKey 匹配插件 Key
+  └── 第三方插件 (外部 URL): 按请求头 API Key / 模型名匹配插件 Key
   → 配额预检（超限返回 429）→ originalFetch 发出请求
   → analyzeResponse() 解析响应
     → SSE 流解析（event:usage 提取精确 token）
@@ -160,9 +195,11 @@ recordCall 保存时的模型名解析（resolveModelName）：
 
 ## 数据存储
 
-- 统计数据存储在 `data/storage/siyuan-token-stats/data.json`
-- 每次保存前自动备份为 `data.json.bak`
-- 数据文件随思源工作空间同步，支持 S3/WebDAV 云同步
+- 主统计数据存储在 `data/storage/siyuan-token-stats/data.json`
+- 插件目录备份存储在 `data/plugins/siyuan-token-stats/settings.json`（防止集市关闭/启用后主存储被清空导致配置丢失）
+- 每次保存前自动备份上一次的主存储内容为 `data.json.bak`
+- 加载时比较两份文件，取 `lastSavedAt` 最新的一份
+- 插件卸载时执行同步写入确保配置落盘
 
 ## 注意事项
 
@@ -171,9 +208,55 @@ recordCall 保存时的模型名解析（resolveModelName）：
 - 不同 AI 平台的响应格式可能不同，插件已兼容主流格式
 - 鸿蒙 NEXT 端的 AI 请求如果通过内核发起，拦截器仍然有效
 - 云同步合并是自动的，无需手动操作
-- 思源智能体的模型切换如果是会话级的（不写入全局配置），插件可能无法识别实际使用的模型。此时模型名会显示为全局配置中的默认模型
+- 思源内置 AI（智能体 + 编辑器 AI）全部通过第三方 Provider 工作，不存在"内核模型"。插件通过读取思源配置中当前 Provider 的 apiKey 来识别使用者
 
 ## 更新日志
+
+### v1.3.12
+
+- 基于思源 GitHub 源码（`kernel/api/ai.go`, `kernel/api/agent.go`, `kernel/model/ai.go`, `kernel/conf/ai.go`）重新梳理架构文档：确认思源所有 AI 功能（智能体、编辑器 AI、嵌入）均通过第三方 Provider 工作，不存在"内核模型"
+- 修正 README 中关于"思源智能体"与"思源内置 AI"的错误区分——它们都是同一套 Provider 系统，只是调用场景不同（agent vs editing）
+- 补充思源 AI 请求的完整数据流图：前端 fetch → Go 后端 → 第三方 API → SSE 转发，阐明插件拦截位置
+- 优化匹配原理说明：优先按 Provider 的真实 apiKey 匹配插件 Key，与第三方插件按请求头 Key 匹配在逻辑上等价
+
+### v1.3.11
+
+- 修复思源智能体仍不能按真实 API Key 统计的问题：现在会读取思源 AI 配置中当前 provider 的 `apiKey`，优先匹配插件中保存的相同 Key，实现与第三方插件一样的分 Key 统计
+- 修复请求体不含 `model` 字段时思源 AI 请求无法按模型匹配的问题：同时从思源配置的 `agent.modelId` / `editing.modelId` 解析当前模型进行匹配
+- 增强配置持久化：除 `data/storage/siyuan-token-stats/data.json` 外，额外在插件目录 `data/plugins/siyuan-token-stats/settings.json` 保存完整配置副本；加载时取两者中最新的一份，集市关闭/重新启用后 API KEY 等设置可从插件目录恢复
+- `onunload` 时先执行异步 `save()`，再执行同步 `saveSync()` 强制写入插件目录备份，避免异步保存被中断导致数据丢失
+
+### v1.3.10
+
+- 修复第三方插件直接访问外部 API 时，多 Key 仍被汇总到一个 Key 的问题：外部 API 请求（OpenAI/Anthropic/自定义 URL）现在同样优先按请求体 `model` 字段匹配“关联模型”
+- 修复插件在集市开关后 API Key 配置可能丢失的问题：`onunload` 改为异步并等待 `save()` 完成，确保卸载前数据已写入存储
+- 增加 `keyMatchesModel` 辅助方法，统一模型匹配逻辑
+
+### v1.3.9
+
+- 修复 API Key 按模型区分仍不生效的问题：思源 AI 请求中，把「Key 关联模型」匹配优先级提升到最高，优先于思源 provider 的 baseURL 匹配
+- 修复 `resolveSiYuanModelNameIfNeeded` 存在未使用参数的代码质量警告
+
+### v1.3.8
+
+- 新增 API Key「关联模型」字段：多 Key 同 Base URL 时，按请求体 `model` 字段精确匹配到对应 Key
+- 修复仪表盘刷新后跳转到中部的 Bug：弹窗仍打开时只更新内容，关闭后重新打开时重建
+- 优化弹窗定位 CSS，避免与思源 Dialog 拖拽机制冲突
+
+### v1.3.7
+
+- 修复仪表盘关闭后无法再次打开的问题：弹窗关闭后旧 Dialog 元素仍被重用，导致内容更新但弹窗不显示
+
+### v1.3.6
+
+- 修复多 provider 时所有请求被汇总到第一个 API Key 的问题：`identifyAiCall` 新增按请求体 `model` 字段匹配 provider，再匹配对应 API Key
+- 仪表盘刷新改为就地更新内容，不再销毁并重建弹窗，保留当前滚动位置与弹窗拖拽位置
+- API Key 管理增加导出/导入功能（导出文件包含完整 `keyFull`，导入时按 Key 去重：相同 Key 更新，不同 Key 新增）
+
+### v1.3.5
+
+- 修复 v1.3.4 弹窗无法向左拖拽的问题：移除 `align-items/justify-content/margin` 的 `!important` 声明，避免覆盖思源 Dialog 拖拽时设置的 inline margin
+- 改为仅设置 `margin-top: 5vh` 使弹窗初始位置下移，不干扰拖拽机制
 
 ### v1.3.4
 

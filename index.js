@@ -431,9 +431,14 @@ const T = require("siyuan"),
   border-bottom: 1px solid var(--b3-border-color);
 }
 
+.tks-key-toolbar > button {
+  margin-right: 6px;
+}
+
 .tks-key-hint {
   font-size: 12px;
   color: var(--b3-theme-on-surface);
+  margin-left: auto;
 }
 
 .tks-key-list {
@@ -584,11 +589,15 @@ const T = require("siyuan"),
 }
 
 /* ─── 弹窗位置 + 滚动支持 ─── */
-/* 仅设置初始 margin-top 使弹窗下移，不干扰思源 Dialog 拖拽机制 */
+/* 使用 overlay 的 align-items + padding-top 控制垂直位置，避免与 Dialog 拖拽时设置的 inline margin 冲突 */
+.b3-dialog:has([id^="tks-"]) {
+  align-items: flex-start;
+  padding-top: 5vh;
+}
+
 .b3-dialog:has([id^="tks-"]) .b3-dialog__container {
   max-width: 96vw;
   max-height: 92vh;
-  margin-top: 5vh;
 }
 
 .b3-dialog:has([id^="tks-"]) .b3-dialog__body {
@@ -614,7 +623,8 @@ const T = require("siyuan"),
 `,
   E = "data/storage/siyuan-token-stats/data.json",
   oe = "data/storage/siyuan-token-stats/data.json.bak",
-  q = "1.3.5",
+  F = "data/plugins/siyuan-token-stats/settings.json",
+  q = "1.3.12",
   I = {
     matchByUrl: !0,
     interceptExternalAPIs: !0,
@@ -640,16 +650,25 @@ class ae {
       (this.data = { version: q, lastSavedAt: 0, apiKeys: [], records: [], settings: { ...I } }));
   }
   async load() {
-    try {
-      const e = await fetch(`/api/file/getFile?path=${encodeURIComponent(E)}`);
-      if (!e.ok) {
-        console.log("[TokenStats] No existing data file, starting fresh.");
-        return;
+    let n = null;
+    for (const path of [E, F]) {
+      try {
+        const e = await fetch(`/api/file/getFile?path=${encodeURIComponent(path)}`);
+        if (!e.ok) continue;
+        const t = await e.text();
+        if (!t) continue;
+        const parsed = JSON.parse(t);
+        if (!n || (parsed.lastSavedAt || 0) > (n.lastSavedAt || 0)) n = parsed;
+      } catch (e) {
+        console.warn(`[TokenStats] Failed to load data from ${path}:`, e);
       }
-      const t = await e.text();
-      if (!t) return;
-      const n = JSON.parse(t),
-        s = (n.apiKeys || []).map((a) => {
+    }
+    if (!n) {
+      console.log("[TokenStats] No existing data file, starting fresh.");
+      return;
+    }
+    try {
+      const s = (n.apiKeys || []).map((a) => {
           const i = { ...a };
           return (
             i.id === "siyuan-built-in" && i.provider === "siyuan" && (i.provider = i.baseUrl ? i.baseUrl : "SiYuan AI"),
@@ -679,6 +698,7 @@ class ae {
   async save() {
     try {
       this.data.lastSavedAt = Date.now();
+      const payload = JSON.stringify(this.data, null, 2);
       try {
         const n = await fetch(`/api/file/getFile?path=${encodeURIComponent(E)}`);
         if (n.ok) {
@@ -693,11 +713,56 @@ class ae {
       } catch {}
       const e = new FormData();
       (e.append("path", E),
-        e.append("file", new Blob([JSON.stringify(this.data, null, 2)], { type: "application/json" })));
+        e.append("file", new Blob([payload], { type: "application/json" })));
       const t = await fetch("/api/file/putFile", { method: "POST", body: e });
       if (!t.ok) throw new Error(`putFile returned ${t.status}`);
+      // 同时写入插件目录备份，防止集市关闭/启用后 data/storage 被清空导致 API KEY 丢失
+      try {
+        const backupForm = new FormData();
+        (backupForm.append("path", F),
+          backupForm.append("file", new Blob([payload], { type: "application/json" })));
+        await fetch("/api/file/putFile", { method: "POST", body: backupForm });
+      } catch (backupErr) {
+        console.warn("[TokenStats] Plugin directory backup save failed:", backupErr);
+      }
     } catch (e) {
-      console.error("[TokenStats] Failed to save data:", e);
+      console.error("[TokenStats] Failed to save data, retrying to backup:", e);
+      try {
+        const backup = new FormData();
+        (backup.append("path", oe),
+          backup.append("file", new Blob([JSON.stringify(this.data, null, 2)], { type: "application/json" })));
+        await fetch("/api/file/putFile", { method: "POST", body: backup });
+      } catch (e2) {
+        console.error("[TokenStats] Backup save also failed:", e2);
+      }
+      // 主存储失败时尝试写入插件目录作为最后的恢复点
+      try {
+        const fallback = new FormData();
+        (fallback.append("path", F),
+          fallback.append("file", new Blob([JSON.stringify(this.data, null, 2)], { type: "application/json" })));
+        await fetch("/api/file/putFile", { method: "POST", body: fallback });
+      } catch (e3) {
+        console.error("[TokenStats] Plugin directory fallback save also failed:", e3);
+      }
+    }
+  }
+  saveSync() {
+    // 使用同步 XHR 在插件卸载前强制落盘，避免异步 fetch 被中断导致配置丢失
+    try {
+      this.data.lastSavedAt = Date.now();
+      const payload = JSON.stringify(this.data, null, 2),
+        e = new XMLHttpRequest();
+      e.open("POST", "/api/file/putFile", !1);
+      const t = new FormData();
+      (t.append("path", F),
+        t.append("file", new Blob([payload], { type: "application/json" }))),
+        e.send(t);
+      if (e.status >= 200 && e.status < 300)
+        console.log("[TokenStats] Synchronous plugin directory save succeeded.");
+      else
+        console.warn("[TokenStats] Synchronous plugin directory save failed:", e.status);
+    } catch (e) {
+      console.error("[TokenStats] saveSync error:", e);
     }
   }
   async mergeFromRemote() {
@@ -828,6 +893,31 @@ class ie {
         const s = te(n.baseUrl);
         return s ? t.includes(s) || s.includes(t) : !1;
       });
+  }
+  findByUrlAndModel(e, t) {
+    if (!e) return null;
+    const n = this.store.getApiKeys().filter((s) => {
+      if (!s.enabled || !s.baseUrl) return !1;
+      const r = te(s.baseUrl),
+        a = te(e);
+      return r && a ? a.includes(r) || r.includes(a) : !1;
+    });
+    if (!n.length) return null;
+    if (t) {
+      const s = String(t).toLowerCase().trim();
+      for (const r of n)
+        if (Array.isArray(r.models) && r.models.find((a) => String(a).toLowerCase().trim() === s)) return r;
+    }
+    return n[0];
+  }
+  findByModel(e) {
+    if (!e) return null;
+    const t = String(e).toLowerCase().trim();
+    return this.store.getApiKeys().find((n) => {
+      if (!n.enabled) return !1;
+      const s = (n.models || []).map((r) => String(r).toLowerCase().trim());
+      return s.includes(t);
+    });
   }
   getResetBoundary(e) {
     if (e === "none") return 0;
@@ -1084,6 +1174,12 @@ class pe {
   setThresholdCallback(e) {
     this.onThresholdAlert = e;
   }
+  keyMatchesModel(e, t) {
+    if (!e || !t) return !1;
+    const n = String(t).toLowerCase().trim(),
+      s = (e.models || []).map((r) => String(r).toLowerCase().trim());
+    return s.includes(n);
+  }
   install() {
     if (this.installed) {
       console.warn("[TokenStats] Interceptor already installed.");
@@ -1215,19 +1311,48 @@ class pe {
   async identifyAiCall(e, t, n, s) {
     const r = e.toLowerCase();
     if (ue(e)) {
-      const o = await this.getSiYuanAiConfig(),
-        l = this.extractEnabledBaseUrls(o);
-      for (const d of l) {
-        const h = this.keyManager.findByUrl(d);
-        if (h && h.enabled)
+      const o = await this.getSiYuanAiConfig();
+      // 思源 AI 请求通常不携带 model 字段，需要从请求体或 SiYuan 配置中的 agent/editing modelId 解析
+      const m = this.extractModel(s) || this.getSiYuanSelectedModelId(o);
+      if (m) {
+        const p = this.findProviderByModel(o, m),
+          providerBaseUrl = p ? p.baseURL : null;
+        // 1) 最优先：按 SiYuan provider 里配置的 apiKey 匹配插件中的 Key（与 copilot 按请求头 Key 匹配等价）
+        if (p && p.apiKey) {
+          const h0 = this.keyManager.findByKey(p.apiKey);
+          if (h0 && h0.enabled)
+            return {
+              apiKeyId: h0.id,
+              apiKeyName: h0.name,
+              source: h0.baseUrl || providerBaseUrl || "siyuan-ai",
+              provider: h0.provider,
+              model: this.resolveSiYuanModelForCall(s, o)
+            };
+        }
+        // 2) 按用户配置的 Key 关联模型匹配
+        const h1 = this.keyManager.findByModel(m);
+        if (h1 && h1.enabled)
           return {
-            apiKeyId: h.id,
-            apiKeyName: h.name,
-            source: h.baseUrl || d || "siyuan-ai",
-            provider: h.provider,
+            apiKeyId: h1.id,
+            apiKeyName: h1.name,
+            source: h1.baseUrl || providerBaseUrl || "siyuan-ai",
+            provider: h1.provider,
             model: this.resolveSiYuanModelForCall(s, o)
           };
+        // 3) 回退：按 provider baseURL + 模型匹配
+        if (providerBaseUrl) {
+          const h2 = this.keyManager.findByUrlAndModel(providerBaseUrl, m);
+          if (h2 && h2.enabled)
+            return {
+              apiKeyId: h2.id,
+              apiKeyName: h2.name,
+              source: h2.baseUrl || providerBaseUrl || "siyuan-ai",
+              provider: h2.provider,
+              model: this.resolveSiYuanModelForCall(s, o)
+            };
+        }
       }
+      // 4) 兜底：URL 匹配
       const c = this.keyManager.findByUrl(e);
       if (c && c.enabled)
         return {
@@ -1237,69 +1362,73 @@ class pe {
           provider: c.provider,
           model: this.resolveSiYuanModelForCall(s, o)
         };
-      const u = this.store.getApiKeys().find((d) => {
-        var h, g;
-        return (
-          d.enabled &&
-          (d.name.includes("思源") ||
-            ((h = d.provider) == null ? void 0 : h.includes("思源")) ||
-            ((g = d.baseUrl) == null ? void 0 : g.includes("/api/ai/")))
-        );
-      });
-      return u
-        ? {
-            apiKeyId: u.id,
-            apiKeyName: u.name,
-            source: u.baseUrl || "siyuan-ai",
-            provider: u.provider,
-            model: this.resolveSiYuanModelForCall(s, o)
-          }
-        : { ...fe(), model: this.resolveSiYuanModelForCall(s, o) };
+      return { ...fe(), model: this.resolveSiYuanModelForCall(s, o) };
     }
     if (n.matchByUrl) {
-      const o = this.keyManager.findByUrl(e);
-      if (o && o.enabled)
+      const o = this.keyManager.findByUrl(e),
+        l = this.extractModel(s);
+      // 若按 URL 命中的 Key 未包含该模型，则优先按模型重新匹配（支持同一 URL 下多 Key）
+      let c = o;
+      if (l && o && !this.keyMatchesModel(o, l)) {
+        const u = this.keyManager.findByModel(l);
+        u && u.enabled && (c = u);
+      }
+      if (c && c.enabled)
         return {
-          apiKeyId: o.id,
-          apiKeyName: o.name,
-          source: o.baseUrl || "url-match",
-          provider: o.provider,
-          model: this.extractModel(s) || "unknown"
+          apiKeyId: c.id,
+          apiKeyName: c.name,
+          source: c.baseUrl || "url-match",
+          provider: c.provider,
+          model: l || "unknown"
         };
     }
     if (!n.interceptExternalAPIs) return null;
+    const d = this.extractModel(s);
     if (r.includes("/v1/chat/completions") || r.includes("/v1/completions")) {
-      const l = (ne(t == null ? void 0 : t.headers, "Authorization") || "").replace(/^bearer\s+/i, "").trim(),
-        c = this.keyManager.findByKey(l) || this.keyManager.findByUrl(e);
+      const h = (ne(t == null ? void 0 : t.headers, "Authorization") || "").replace(/^bearer\s+/i, "").trim();
+      // 外部 OpenAI 兼容 API：优先按模型匹配，再按 Key，最后按 URL
+      let g = d ? this.keyManager.findByModel(d) : null;
+      if (!g || !g.enabled) g = h ? this.keyManager.findByKey(h) : null;
+      if (!g || !g.enabled) g = this.keyManager.findByUrl(e);
       return {
-        apiKeyId: (c == null ? void 0 : c.id) || "unknown",
-        apiKeyName: (c == null ? void 0 : c.name) || this.keyManager.maskKey(l) || "Unknown",
+        apiKeyId: (g == null ? void 0 : g.id) || "unknown",
+        apiKeyName: (g == null ? void 0 : g.name) || this.keyManager.maskKey(h) || "Unknown",
         source: "external-openai",
-        provider: (c == null ? void 0 : c.provider) || "OpenAI",
-        model: this.extractModel(s) || "unknown"
+        provider: (g == null ? void 0 : g.provider) || "OpenAI",
+        model: d || "unknown"
       };
     }
     if (r.includes("/v1/messages")) {
-      const o = ne(t == null ? void 0 : t.headers, "x-api-key") || "",
-        l = this.keyManager.findByKey(o) || this.keyManager.findByUrl(e);
+      const p = ne(t == null ? void 0 : t.headers, "x-api-key") || "";
+      // 外部 Anthropic API：优先按模型匹配，再按 Key，最后按 URL
+      let v = d ? this.keyManager.findByModel(d) : null;
+      if (!v || !v.enabled) v = p ? this.keyManager.findByKey(p) : null;
+      if (!v || !v.enabled) v = this.keyManager.findByUrl(e);
       return {
-        apiKeyId: (l == null ? void 0 : l.id) || "unknown",
-        apiKeyName: (l == null ? void 0 : l.name) || this.keyManager.maskKey(o) || "Unknown",
+        apiKeyId: (v == null ? void 0 : v.id) || "unknown",
+        apiKeyName: (v == null ? void 0 : v.name) || this.keyManager.maskKey(p) || "Unknown",
         source: "external-anthropic",
-        provider: (l == null ? void 0 : l.provider) || "Anthropic",
-        model: this.extractModel(s) || "unknown"
+        provider: (v == null ? void 0 : v.provider) || "Anthropic",
+        model: d || "unknown"
       };
     }
-    const i = this.keyManager.findByUrl(e);
+    let i = d ? this.keyManager.findByModel(d) : null;
+    if (!i || !i.enabled) i = this.keyManager.findByUrl(e);
     return i && i.enabled
       ? {
           apiKeyId: i.id,
           apiKeyName: i.name,
           source: i.baseUrl || "custom-url",
           provider: i.provider,
-          model: this.extractModel(s) || "unknown"
+          model: d || "unknown"
         }
       : null;
+  }
+  getSiYuanSelectedModelId(e) {
+    if (!e) return null;
+    const t = e.agent || {},
+      n = e.editing || {};
+    return t.modelId || n.modelId || null;
   }
   extractModel(e) {
     return L(e == null ? void 0 : e.model) || null;
@@ -1376,7 +1505,7 @@ class pe {
     const l = (e.headers.get("content-type") || "").toLowerCase(),
       c = this.store.getSettings();
     if (!o || o === "unknown") {
-      const u0 = await this.resolveSiYuanModelNameIfNeeded(t.source, t.model);
+      const u0 = await this.resolveSiYuanModelNameIfNeeded(t.source);
       u0 && (o = u0);
     }
     const d = this.tokenCounter.estimateFromMessages(this.extractMessages(s));
@@ -1870,7 +1999,7 @@ class pe {
     const s = L(...n);
     return s || R(e) || R(t.model) || t.source || "unknown";
   }
-  async resolveSiYuanModelNameIfNeeded(e, t) {
+  async resolveSiYuanModelNameIfNeeded(e) {
     return this.isSiYuanAiSource(e) ? this.getSiYuanModelName() : null;
   }
   isSiYuanAiSource(e) {
@@ -1895,12 +2024,22 @@ class pe {
     } catch {}
     return null;
   }
-  extractEnabledBaseUrls(e) {
-    if (!e) return [];
-    const t = e.providers || [],
-      n = new Set();
-    for (const s of t) s != null && s.enabled && s.baseURL && n.add(String(s.baseURL));
-    return Array.from(n);
+  findProviderByModel(e, t) {
+    if (!e || !t) return null;
+    const n = String(t).toLowerCase().trim();
+    if (!n) return null;
+    const s = e.providers || [];
+    for (const r of s) {
+      if (!r || !r.enabled) continue;
+      const a = (r.models || []).find((i) => {
+        const o = String(i == null ? void 0 : i.id || "").toLowerCase().trim(),
+          l = String(i == null ? void 0 : i.name || "").toLowerCase().trim(),
+          c = String(i == null ? void 0 : i.displayName || "").toLowerCase().trim();
+        return o === n || l === n || c === n;
+      });
+      if (a) return r;
+    }
+    return null;
   }
   resolveSiYuanModelNameFromConfig(e) {
     var i, o;
@@ -2211,13 +2350,15 @@ class me {
     setTimeout(() => this.renderKeyList(t), 50);
   }
   renderKeyList(e) {
-    var r;
+    var r, g, h;
     const t = e.element.querySelector("#tks-key-mgr");
     if (!t) return;
     const n = this.store.getApiKeys();
     t.innerHTML = `
       <div class="tks-key-toolbar">
         <button class="b3-button b3-button--text" id="tks-add-key">+ 添加 API Key</button>
+        <button class="b3-button b3-button--text" id="tks-export-keys">📤 导出</button>
+        <button class="b3-button b3-button--text" id="tks-import-keys">📥 导入</button>
         <span class="tks-key-hint">共 ${n.length} 个 Key</span>
       </div>
       <div class="tks-key-list" id="tks-key-list-items"></div>
@@ -2261,6 +2402,14 @@ class me {
       r.addEventListener("click", () => {
         this.openKeyEditor(e, null);
       }),
+      (g = t.querySelector("#tks-export-keys")) == null ||
+        g.addEventListener("click", () => {
+          this.exportKeys();
+        }),
+      (h = t.querySelector("#tks-import-keys")) == null ||
+        h.addEventListener("click", () => {
+          this.importKeys(e);
+        }),
       t.querySelectorAll("[data-action]").forEach((a) => {
         a.addEventListener("click", (i) => {
           const o = i.currentTarget,
@@ -2279,6 +2428,86 @@ class me {
               });
         });
       }));
+  }
+  exportKeys() {
+    const e = this.store.getApiKeys(),
+      t = { version: q, exportedAt: Date.now(), apiKeys: e },
+      n = JSON.stringify(t, null, 2),
+      s = new Blob([n], { type: "application/json" }),
+      r = URL.createObjectURL(s),
+      a = document.createElement("a");
+    (a.href = r),
+      (a.download = `siyuan-token-stats-keys-${K(new Date())}.json`),
+      document.body.appendChild(a),
+      a.click(),
+      setTimeout(() => {
+        document.body.removeChild(a), URL.revokeObjectURL(r);
+      }, 0),
+      T.showMessage(`已导出 ${e.length} 个 API Key`, 2e3, "info");
+  }
+  importKeys(e) {
+    const t = document.createElement("input");
+    (t.type = "file"),
+      (t.accept = "application/json"),
+      (t.style.display = "none"),
+      t.addEventListener("change", async (n) => {
+        const s = n.target.files[0];
+        if (!s) return;
+        try {
+          const r = await s.text(),
+            a = JSON.parse(r),
+            i = Array.isArray(a) ? a : a.apiKeys;
+          if (!Array.isArray(i)) throw new Error("导入文件格式不正确，未找到 apiKeys 数组");
+          let o = 0,
+            l = 0;
+          for (const c of i) {
+            if (!c || !c.keyFull) continue;
+            const models = Array.isArray(c.models)
+              ? c.models
+              : typeof c.models === "string"
+                ? c.models.split(/[,，]/).map((x) => x.trim()).filter(Boolean)
+                : [];
+            const u = this.store.getApiKeys().find((d) => d.keyFull === c.keyFull);
+            u
+              ? (this.store.updateApiKey(u.id, {
+                  name: c.name || u.name,
+                  provider: c.provider || u.provider,
+                  baseUrl: c.baseUrl || u.baseUrl,
+                  models: models.length ? models : (u.models || []),
+                  quotaLimit: c.quotaLimit ?? u.quotaLimit,
+                  alertThreshold: c.alertThreshold ?? u.alertThreshold,
+                  enabled: c.enabled ?? u.enabled
+                }),
+                l++)
+              : (this.store.addApiKey({
+                  id: this.keyManager.generateKeyId(),
+                  name: c.name || "Imported Key",
+                  keyFull: c.keyFull,
+                  keyMasked: this.keyManager.maskKey(c.keyFull),
+                  provider: c.provider || "",
+                  baseUrl: c.baseUrl || "",
+                  models: models,
+                  quotaLimit: c.quotaLimit || 0,
+                  usedTokensOffset: c.usedTokensOffset || 0,
+                  usedInputTokensOffset: c.usedInputTokensOffset || 0,
+                  usedOutputTokensOffset: c.usedOutputTokensOffset || 0,
+                  alertThreshold: c.alertThreshold || 0,
+                  enabled: c.enabled !== false,
+                  createdAt: Date.now()
+                }),
+                o++);
+          }
+          this.renderKeyList(e);
+          const d = [];
+          o > 0 && d.push(`新增 ${o} 个`), l > 0 && d.push(`更新 ${l} 个`),
+            T.showMessage(`导入成功：${d.join("，") || "无变化"}`, 2e3, "info");
+        } catch (h) {
+          console.error("[TokenStats] Import keys failed:", h), T.showMessage("导入失败：" + h.message, 3e3, "error");
+        }
+      }),
+      document.body.appendChild(t),
+      t.click(),
+      setTimeout(() => document.body.removeChild(t), 0);
   }
   openKeyEditor(e, t) {
     var i, o, l;
@@ -2317,6 +2546,11 @@ class me {
             <label>API Base URL</label>
             <input type="text" id="tke-url" class="b3-text-field" value="${w((t == null ? void 0 : t.baseUrl) || "")}" placeholder="例如：https://api.openai.com/v1/chat/completions，或 /api/ai/" />
             <div class="tks-form-hint">用于 URL 匹配。可填完整 URL、域名或路径（如 /api/ai/）。留空则仅按 Key 匹配。</div>
+          </div>
+          <div class="tks-form-row">
+            <label>关联模型</label>
+            <input type="text" id="tke-models" class="b3-text-field" value="${w((t == null ? void 0 : t.models) ? t.models.join(", ") : "")}" placeholder="例如：Qwen/Qwen3-8B, sensenova-6.7-flash-lite" />
+            <div class="tks-form-hint">多个模型用逗号分隔。当多个 Key 使用相同 Base URL 时，按请求模型匹配到对应 Key</div>
           </div>
           <div class="tks-form-row tks-form-row-2col">
             <div>
@@ -2377,6 +2611,10 @@ class me {
             u = a.querySelector("#tke-key").value.trim(),
             d = a.querySelector("#tke-provider").value.trim(),
             h = a.querySelector("#tke-url").value.trim(),
+            models = a.querySelector("#tke-models").value
+              .split(/[,，]/)
+              .map((x) => x.trim())
+              .filter(Boolean),
             g = parseInt(a.querySelector("#tke-quota").value, 10) || 0,
             p = parseInt(a.querySelector("#tke-threshold").value, 10) || 0,
             k = Math.max(0, parseInt(a.querySelector("#tke-usedTokensOffset").value, 10) || 0),
@@ -2394,6 +2632,7 @@ class me {
               keyMasked: this.keyManager.maskKey(u),
               provider: d,
               baseUrl: h,
+              models: models,
               quotaLimit: g,
               alertThreshold: p,
               usedTokensOffset: k,
@@ -2410,6 +2649,7 @@ class me {
               keyMasked: this.keyManager.maskKey(u),
               provider: d,
               baseUrl: h,
+              models: models,
               quotaLimit: g,
               usedTokensOffset: k,
               usedInputTokensOffset: v,
@@ -2480,15 +2720,30 @@ class be {
     ((this.dialog = null), (this.summary = null), (this.store = e), (this.keyManager = t));
   }
   show() {
-    (this.dialog && (this.dialog.destroy(), (this.dialog = null)), (this.summary = this.computeSummary()));
-    const e = this.isMobile();
-    ((this.dialog = new T.Dialog({
-      title: "📊 Token 用量统计",
-      width: e ? "95vw" : "900px",
-      height: e ? "85vh" : "700px",
-      content: this.renderHTML(this.summary)
-    })),
-      this.bindEvents());
+    try {
+      this.summary = this.computeSummary();
+      if (this.dialog && this.dialog.element && this.dialog.element.isConnected) {
+        const e = this.dialog.element.querySelector(".b3-dialog__body");
+        if (e) {
+          const t = e.scrollTop;
+          (e.innerHTML = this.renderHTML(this.summary)), this.bindEvents();
+          const n = this.dialog.element.querySelector(".b3-dialog__body");
+          return n && (n.scrollTop = t), void 0;
+        }
+      }
+      this.dialog && (this.dialog.destroy(), (this.dialog = null));
+      const e = this.isMobile();
+      ((this.dialog = new T.Dialog({
+        title: "📊 Token 用量统计",
+        width: e ? "95vw" : "900px",
+        height: e ? "85vh" : "700px",
+        content: this.renderHTML(this.summary)
+      })),
+        this.bindEvents());
+    } catch (e) {
+      console.error("[TokenStats] Dashboard show error:", e);
+      T.showMessage("仪表盘打开失败: " + e.message, 3e3, "error");
+    }
   }
   isMobile() {
     const e = T.getFrontend();
@@ -2804,7 +3059,7 @@ class be {
   }
   bindEvents() {
     var t, n, s, r, a;
-    if (!this.dialog) return;
+    if (!this.dialog || !this.dialog.element) return;
     const e = this.dialog.element;
     ((t = e.querySelector("#tks-refresh")) == null ||
       t.addEventListener("click", () => {
@@ -2912,12 +3167,12 @@ class ve extends T.Plugin {
       this.eventBus.on("sync-end", this.syncHandler),
       console.log("[TokenStats] Plugin loaded successfully."));
   }
-  onunload() {
+  async onunload() {
     var e, t, n;
     (console.log("[TokenStats] Plugin unloading..."),
       this.syncHandler && (this.eventBus.off("sync-end", this.syncHandler), (this.syncHandler = null)),
       (e = this.interceptor) == null || e.uninstall(),
-      (t = this.store) == null || t.save().catch((s) => console.error("[TokenStats] Save on unload failed:", s)),
+      (t = this.store) == null || (await t.save().catch((s) => console.error("[TokenStats] Save on unload failed:", s)), t.saveSync()),
       (n = this.styleElement) == null || n.remove(),
       (this.styleElement = null),
       console.log("[TokenStats] Plugin unloaded."));
