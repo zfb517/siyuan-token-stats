@@ -474,7 +474,17 @@ export class SettingsPanel {
       </div>
     `;
 
-    const makePackRow = (pack: PricePack): string => `
+    const makePackRow = (pack: PricePack): string => {
+      const usage = this.store.getPackUsage(pack);
+      const total = pack.totalTokens || 0;
+      let usageText: string;
+      if (total > 0) {
+        const remaining = Math.max(0, total - usage.usedTokens);
+        usageText = `已用 ${usage.usedTokens.toLocaleString()} / 总量 ${total.toLocaleString()}（剩余 ${remaining.toLocaleString()}）`;
+      } else {
+        usageText = `已用 ${usage.usedTokens.toLocaleString()}（总量不限）`;
+      }
+      return `
       <div class="tks-pack-row" data-pack-id="${esc(pack.id)}">
         <input type="text" class="b3-text-field tks-pack-name" value="${esc(pack.name)}" placeholder="资源包名（如 通义千问）" />
         <input type="number" step="1" min="0" class="b3-text-field tks-pack-total" value="${esc(String(pack.totalTokens || 0))}" placeholder="总 Tokens（0 不限）" />
@@ -482,8 +492,10 @@ export class SettingsPanel {
         <input type="number" step="0.0001" min="0" class="b3-text-field tks-pack-output" value="${esc(String(pack.output))}" placeholder="输出单价/1K" />
         <input type="text" class="b3-text-field tks-pack-models" value="${esc((pack.models || []).join(", "))}" placeholder="涵盖模型，逗号分隔" />
         <button class="b3-button b3-button--small b3-button--danger tks-pack-del" title="删除">✕</button>
+        <div class="tks-pack-usage">${esc(usageText)}</div>
       </div>
     `;
+    };
 
     const initialRows = Object.entries(prices)
       .map(([m, p]) => makeRow(m, p.input, p.output))

@@ -419,7 +419,8 @@ export class Dashboard {
         <!-- 操作按钮 -->
         <div class="tks-dashboard-actions">
           <button class="b3-button b3-button--outline" id="tks-refresh">🔄 刷新</button>
-          <button class="b3-button b3-button--outline" id="tks-export">📥 导出数据</button>
+          <button class="b3-button b3-button--outline" id="tks-export-json">📥 导出 JSON</button>
+          <button class="b3-button b3-button--outline" id="tks-export-csv">📊 导出 CSV</button>
           <button class="b3-button b3-button--outline b3-button--danger" id="tks-clear-records">🗑️ 清除记录</button>
         </div>
       </div>
@@ -541,16 +542,16 @@ export class Dashboard {
       this.refreshContent();
     });
 
-    el.querySelector("#tks-export")?.addEventListener("click", () => {
+    el.querySelector("#tks-export-json")?.addEventListener("click", () => {
       const data = this.store.exportAll();
-      const blob = new Blob([data], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `siyuan-token-stats-${new Date().toISOString().split("T")[0]}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-      showMessage("数据已导出", 2000, "info");
+      this.downloadFile(`siyuan-token-stats-${new Date().toISOString().split("T")[0]}.json`, data, "application/json");
+      showMessage("数据已导出（JSON）", 2000, "info");
+    });
+
+    el.querySelector("#tks-export-csv")?.addEventListener("click", () => {
+      const csv = this.buildRecordsCsv();
+      this.downloadFile(`siyuan-token-stats-${new Date().toISOString().split("T")[0]}.csv`, csv, "text/csv;charset=utf-8");
+      showMessage("数据已导出（CSV）", 2000, "info");
     });
 
     el.querySelector("#tks-clear-records")?.addEventListener("click", () => {
@@ -586,5 +587,58 @@ export class Dashboard {
       this.store.save();
       this.show();
     });
+  }
+
+  /** 触发浏览器下载 */
+  private downloadFile(filename: string, content: string, mime: string): void {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  /** 生成调用记录表的 CSV（含汇总信息表头） */
+  private buildRecordsCsv(): string {
+    const records = this.store.getRecords().slice().sort((a, b) => a.timestamp - b.timestamp);
+    const cur = this.store.getSettings().currency || "¥";
+    const summary = this.summary;
+    const escapeCsv = (v: string | number): string => {
+      const s = String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const lines: string[] = [];
+    // 汇总行（以 # 开头，便于表格软件识别为注释/标题）
+    if (summary) {
+      lines.push(`# 总Token,${summary.totalTokens}`);
+      lines.push(`# 输入Token,${summary.totalInputTokens}`);
+      lines.push(`# 输出Token,${summary.totalOutputTokens}`);
+      lines.push(`# 请求数,${summary.totalRequests}`);
+      lines.push(`# 总费用,${cur}${summary.totalCost.toFixed(4)}`);
+    }
+    lines.push(`# 记录数,${records.length}`);
+    // 表头
+    lines.push(["时间", "模型", "输入Token", "输出Token", "总计Token", "费用", "Key名称", "耗时(ms)", "成功"].join(","));
+    // 数据行
+    for (const r of records) {
+      const d = new Date(r.timestamp);
+      const time = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+      const keyName = this.store.getApiKey(r.apiKeyId)?.name || r.apiKeyName || "";
+      lines.push([
+        time,
+        r.model,
+        r.inputTokens,
+        r.outputTokens,
+        r.totalTokens,
+        cur + this.store.getRecordCost(r).toFixed(4),
+        keyName,
+        r.requestTime,
+        r.success ? "是" : "否",
+      ].map(escapeCsv).join(","));
+    }
+    // 加 BOM 头，保证 Excel 正确识别 UTF-8 中文
+    return "﻿" + lines.join("\n");
   }
 }

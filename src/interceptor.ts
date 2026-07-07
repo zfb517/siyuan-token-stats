@@ -196,6 +196,29 @@ export class Interceptor {
         }
       }
 
+      // ── 全局费用限额拦截 ──
+      if (settings.blockOnQuotaExceeded && settings.globalCostLimit > 0) {
+        const estInputTokens = self.tokenCounter.estimateFromMessages(
+          self.extractMessages(parsedBody)
+        );
+        // 预检时未知输出 token，保守假设输出 ≈ 输入来估算本次费用（下限保护，避免漏拦）
+        const estimatedCost = self.store.calcCost(aiCall.model, estInputTokens, estInputTokens);
+        const cur = settings.currency || "¥";
+        if (self.keyManager.isGlobalCostExceeded(settings)) {
+          const msg = `[TokenStats] 已阻止请求：全局费用限额已用尽（${cur}${settings.globalCostLimit.toFixed(2)}）`;
+          console.warn(msg);
+          self.onThresholdAlert("global-cost", msg);
+          return self.createBlockedResponse(msg, aiCall);
+        }
+        if (estimatedCost > 0 && self.keyManager.wouldExceedGlobalCostQuota(settings, estimatedCost)) {
+          const remaining = self.keyManager.getGlobalRemainingCost(settings);
+          const msg = `[TokenStats] 已阻止请求：全局费用剩余 ${cur}${remaining.toFixed(2)}，预估本次费用 ${cur}${estimatedCost.toFixed(2)} 将超限`;
+          console.warn(msg);
+          self.onThresholdAlert("global-cost", msg);
+          return self.createBlockedResponse(msg, aiCall);
+        }
+      }
+
       // ── 单 Key 限额拦截 ──
       if (settings.blockOnQuotaExceeded) {
         // 检查 1：已超限 → 直接拦截

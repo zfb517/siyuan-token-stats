@@ -636,6 +636,22 @@ export class Store {
   }
 
   /**
+   * 计算某资源包已消耗的 token 总量（输入+输出），按包内涵盖模型（归一化）聚合所有历史记录。
+   * 用于费用估算配置弹窗中展示资源包的「已用 / 总量 / 剩余」额度。
+   */
+  getPackUsage(pack: PricePack): { usedTokens: number } {
+    const models = new Set((pack.models || []).map((m) => this.normalizeModelKey(m)));
+    if (models.size === 0) return { usedTokens: 0 };
+    let used = 0;
+    for (const r of this.data.records) {
+      if (models.has(this.normalizeModelKey(r.model))) {
+        used += (r.inputTokens || 0) + (r.outputTokens || 0);
+      }
+    }
+    return { usedTokens: used };
+  }
+
+  /**
    * 计算当前重置周期内所有记录的总费用（用于费用限额）。
    * 依赖 keyManager 提供的重置周期边界，因此放在 Store 上供 KeyManager 调用。
    */
