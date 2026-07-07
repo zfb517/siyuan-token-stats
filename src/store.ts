@@ -2,7 +2,7 @@
  * 数据持久化层
  * 使用思源的文件 API 将数据存储在 data/storage/siyuan-token-stats/ 下。
  */
-import type { PluginData, TokenRecord, ApiKeyConfig, PluginSettings } from "./types";
+import type { PluginData, TokenRecord, ApiKeyConfig, PluginSettings, ModelPrice } from "./types";
 
 const STORAGE_PATH = "data/storage/siyuan-token-stats/data.json";
 const BAK_PATH = "data/storage/siyuan-token-stats/data.json.bak";
@@ -28,6 +28,8 @@ const DEFAULT_SETTINGS: PluginSettings = {
   trendDateRangeEnd: "",
   trendAggregation: "daily",
   debugLogging: false,
+  currency: "¥",
+  modelPrices: {},
 };
 
 export class Store {
@@ -471,6 +473,49 @@ export class Store {
     this.data.settings = { ...DEFAULT_SETTINGS };
     this.data.settingsUpdatedAt = Date.now();
     this.scheduleSave();
+  }
+
+  // ─── 费用估算 ───
+
+  /** 费用货币符号 */
+  getCurrency(): string {
+    return this.data.settings.currency || "¥";
+  }
+
+  /** 归一化模型名为单价表的查询键（小写、去空格） */
+  private normalizeModelKey(model: string): string {
+    return (model || "").toLowerCase().trim();
+  }
+
+  /** 获取某模型的单价配置（未配置返回 null） */
+  getModelPrice(model: string): ModelPrice | null {
+    const key = this.normalizeModelKey(model);
+    if (!key) return null;
+    const map = this.data.settings.modelPrices || {};
+    return map[key] ?? null;
+  }
+
+  /** 是否存在任意模型单价配置 */
+  hasAnyPrice(): boolean {
+    return Object.keys(this.data.settings.modelPrices || {}).length > 0;
+  }
+
+  /**
+   * 计算单次调用的估算费用（货币单位）。
+   * 未配置该模型单价时返回 0。
+   */
+  calcCost(model: string, inputTokens: number, outputTokens: number): number {
+    const price = this.getModelPrice(model);
+    if (!price) return 0;
+    const inputCost = (inputTokens / 1000) * price.input;
+    const outputCost = (outputTokens / 1000) * price.output;
+    return inputCost + outputCost;
+  }
+
+  /** 格式化费用显示，如 ¥0.0123 */
+  formatCost(cost: number): string {
+    const cur = this.getCurrency();
+    return `${cur}${cost.toFixed(4)}`;
   }
 
   // ─── Export ───

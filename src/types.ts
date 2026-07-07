@@ -2,6 +2,14 @@
  * Token Statistics Plugin - Type Definitions
  */
 
+/** 模型单价：每 1000 tokens 的价格（以 currency 指定的货币单位计） */
+export interface ModelPrice {
+  /** 每 1K 输入 tokens 价格 */
+  input: number;
+  /** 每 1K 输出 tokens 价格 */
+  output: number;
+}
+
 /** API Key 配置 */
 export interface ApiKeyConfig {
   id: string;
@@ -82,6 +90,10 @@ export interface PluginSettings {
   trendAggregation: "daily" | "weekly" | "monthly";
   /** 启用调试日志（默认关闭） */
   debugLogging?: boolean;
+  /** 费用估算货币符号，默认 ¥ */
+  currency: string;
+  /** 每模型单价（每 1K tokens），键为模型名小写归一化 */
+  modelPrices: Record<string, ModelPrice>;
 }
 
 /** 完整持久化数据 */
@@ -123,6 +135,8 @@ export interface StatisticsSummary {
   successRequests: number;
   failedRequests: number;
   averageRequestTime: number;
+  /** 估算总费用（货币单位，由各模型单价计算） */
+  totalCost: number;
   modelStats: Record<string, ModelStat>;
   dailyStats: DailyStat[];
   keyStats: KeyStat[];
@@ -134,6 +148,8 @@ export interface ModelStat {
   tokens: number;
   inputTokens: number;
   outputTokens: number;
+  /** 该模型估算费用 */
+  cost: number;
 }
 
 export interface DailyStat {

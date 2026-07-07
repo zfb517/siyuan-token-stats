@@ -133,6 +133,7 @@ export class Dashboard {
       successRequests: 0,
       failedRequests: 0,
       averageRequestTime: 0,
+      totalCost: 0,
       modelStats: {},
       dailyStats: [],
       keyStats: [],
@@ -144,6 +145,7 @@ export class Dashboard {
       summary.totalTokens += r.totalTokens;
       summary.totalInputTokens += r.inputTokens;
       summary.totalOutputTokens += r.outputTokens;
+      summary.totalCost += this.store.calcCost(r.model, r.inputTokens, r.outputTokens);
       totalTime += r.requestTime;
 
       if (r.success) {
@@ -162,12 +164,14 @@ export class Dashboard {
           tokens: 0,
           inputTokens: 0,
           outputTokens: 0,
+          cost: 0,
         };
       }
       summary.modelStats[modelKey].count++;
       summary.modelStats[modelKey].tokens += r.totalTokens;
       summary.modelStats[modelKey].inputTokens += r.inputTokens;
       summary.modelStats[modelKey].outputTokens += r.outputTokens;
+      summary.modelStats[modelKey].cost += this.store.calcCost(r.model, r.inputTokens, r.outputTokens);
     }
 
     summary.averageRequestTime =
@@ -325,6 +329,13 @@ export class Dashboard {
               <div class="tks-card-label">平均耗时(ms)</div>
             </div>
           </div>
+          <div class="tks-card ${this.store.hasAnyPrice() ? "" : "tks-card-muted"}">
+            <div class="tks-card-icon">💰</div>
+            <div class="tks-card-body">
+              <div class="tks-card-value">${this.store.hasAnyPrice() ? this.store.formatCost(s.totalCost) : "未配置"}</div>
+              <div class="tks-card-label">估算总费用${this.store.hasAnyPrice() ? "" : "（请设置单价）"}</div>
+            </div>
+          </div>
           ${settings.globalQuotaLimit > 0 ? `
           <div class="tks-card tks-card-global">
             <div class="tks-card-icon">🌍</div>
@@ -379,6 +390,7 @@ export class Dashboard {
                   <th>输入</th>
                   <th>输出</th>
                   <th>总计</th>
+                  <th>费用</th>
                   <th>耗时</th>
                   <th>状态</th>
                 </tr>
@@ -477,7 +489,7 @@ export class Dashboard {
           <div class="tks-model-bar-fill" style="width: ${widthPercent}%"></div>
         </div>
         <div class="tks-model-detail">
-          ${m.tokens.toLocaleString()} tokens · ${m.count} 次
+          ${m.tokens.toLocaleString()} tokens · ${m.count} 次${this.store.hasAnyPrice() ? ` · 💰 ${this.store.formatCost(m.cost)}` : ""}
         </div>
       </div>
     `;
@@ -500,6 +512,7 @@ export class Dashboard {
         <td>${r.inputTokens.toLocaleString()}</td>
         <td>${r.outputTokens.toLocaleString()}</td>
         <td><strong>${r.totalTokens.toLocaleString()}</strong></td>
+        <td>${this.store.hasAnyPrice() ? this.store.formatCost(this.store.calcCost(r.model, r.inputTokens, r.outputTokens)) : "—"}</td>
         <td>${r.requestTime}ms</td>
         <td>${r.success ? "✅" : "❌"}</td>
       </tr>

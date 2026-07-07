@@ -5,7 +5,7 @@
 import { Setting, Dialog, showMessage, confirm, getFrontend } from "siyuan";
 import type { Store } from "./store";
 import type { KeyManager } from "./key-manager";
-import type { ApiKeyConfig, QuotaResetCycle } from "./types";
+import type { ApiKeyConfig, QuotaResetCycle, ModelPrice } from "./types";
 
 /** 转义 HTML 特殊字符，防止 XSS */
 function esc(str: string): string {
@@ -212,6 +212,13 @@ export class SettingsPanel {
       },
     });
 
+    // ─── 费用估算配置 ───
+    setting.addItem({
+      title: "费用估算配置",
+      description: "设置每模型单价（每 1K tokens 的输入/输出价格）与货币符号，仪表盘将显示估算费用",
+      actionElement: this.createButton("配置", () => this.openPriceEditor()),
+    });
+
     // ─── API Key 管理 ───
     setting.addItem({
       title: "API Key 管理",
@@ -371,6 +378,90 @@ export class SettingsPanel {
   private isMobile(): boolean {
     const frontend = getFrontend();
     return frontend === "mobile" || frontend === "browser-mobile";
+  }
+
+  // ─── 费用估算配置对话框 ───
+
+  private openPriceEditor(): void {
+    const s = this.store.getSettings();
+    const mobile = this.isMobile();
+    const dialog = new Dialog({
+      title: "费用估算配置",
+      width: mobile ? "95vw" : "640px",
+      height: "auto",
+      content: `<div id="tks-price-editor" class="tks-price-editor"></div>`,
+    });
+
+    setTimeout(() => this.renderPriceEditor(dialog, { ...s.modelPrices }, s.currency || "¥"), 50);
+  }
+
+  private renderPriceEditor(dialog: Dialog, prices: Record<string, ModelPrice>, currency: string): void {
+    const container = dialog.element.querySelector("#tks-price-editor") as HTMLElement;
+    if (!container) return;
+
+    const makeRow = (model: string, input: number, output: number): string => `
+      <div class="tks-price-row">
+        <input type="text" class="b3-text-field tks-price-model" value="${esc(model)}" placeholder="模型名（如 gpt-4o）" />
+        <input type="number" step="0.0001" min="0" class="b3-text-field tks-price-input" value="${esc(String(input))}" placeholder="输入/1K" />
+        <input type="number" step="0.0001" min="0" class="b3-text-field tks-price-output" value="${esc(String(output))}" placeholder="输出/1K" />
+        <button class="b3-button b3-button--small b3-button--danger tks-price-del" title="删除">✕</button>
+      </div>
+    `;
+
+    const initialRows = Object.entries(prices)
+      .map(([m, p]) => makeRow(m, p.input, p.output))
+      .join("");
+
+    container.innerHTML = `
+      <div class="tks-price-head">
+        <label>货币符号</label>
+        <select id="tks-price-currency" class="b3-select fn__size200">
+          <option value="¥" ${currency === "¥" ? "selected" : ""}>¥ (人民币)</option>
+          <option value="$" ${currency === "$" ? "selected" : ""}>$ (美元)</option>
+        </select>
+      </div>
+      <div class="tks-price-hint">价格单位：每 1K tokens 的货币金额。模型名不区分大小写，保存时自动归一化为小写。</div>
+      <div class="tks-price-list" id="tks-price-list">${initialRows || '<div class="tks-price-empty">尚未配置任何模型单价</div>'}</div>
+      <div class="tks-price-toolbar">
+        <button class="b3-button b3-button--text" id="tks-price-add">+ 添加模型</button>
+        <button class="b3-button b3-button--text" id="tks-price-save">保存</button>
+      </div>
+    `;
+
+    const listEl = container.querySelector("#tks-price-list") as HTMLElement;
+
+    const bindRow = (row: HTMLElement) => {
+      row.querySelector(".tks-price-del")?.addEventListener("click", () => {
+        row.remove();
+        if (listEl.querySelectorAll(".tks-price-row").length === 0) {
+          listEl.innerHTML = '<div class="tks-price-empty">尚未配置任何模型单价</div>';
+        }
+      });
+    };
+
+    listEl.querySelectorAll(".tks-price-row").forEach((r) => bindRow(r as HTMLElement));
+
+    container.querySelector("#tks-price-add")?.addEventListener("click", () => {
+      const empty = listEl.querySelector(".tks-price-empty");
+      if (empty) empty.remove();
+      listEl.insertAdjacentHTML("beforeend", makeRow("", 0, 0));
+      bindRow(listEl.lastElementChild as HTMLElement);
+    });
+
+    container.querySelector("#tks-price-save")?.addEventListener("click", () => {
+      const finalPrices: Record<string, ModelPrice> = {};
+      listEl.querySelectorAll(".tks-price-row").forEach((row) => {
+        const model = ((row.querySelector(".tks-price-model") as HTMLInputElement)?.value || "").trim().toLowerCase();
+        const input = parseFloat((row.querySelector(".tks-price-input") as HTMLInputElement)?.value || "0") || 0;
+        const output = parseFloat((row.querySelector(".tks-price-output") as HTMLInputElement)?.value || "0") || 0;
+        if (model) finalPrices[model] = { input, output };
+      });
+      const cur = (container.querySelector("#tks-price-currency") as HTMLSelectElement)?.value || "¥";
+      this.store.updateSettings({ currency: cur, modelPrices: finalPrices });
+      this.store.save();
+      dialog.destroy();
+      showMessage("费用配置已保存", 2000, "info");
+    });
   }
 
   // ─── API Key 管理对话框 ───
