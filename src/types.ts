@@ -87,8 +87,18 @@ export interface PluginSettings {
 /** 完整持久化数据 */
 export interface PluginData {
   version: string;
-  /** 最后保存时间戳，用于云同步冲突检测 */
+  /** 最后保存时间戳，用于云同步冲突检测（每次保存都会更新） */
   lastSavedAt: number;
+  /**
+   * 设置最后修改时间戳，独立于 lastSavedAt。
+   * 云同步合并时据此判断「哪端设置更新」，避免被无关的 Token 记录保存时间戳覆盖。
+   */
+  settingsUpdatedAt: number;
+  /**
+   * API Key 最后修改时间戳，独立于 lastSavedAt。
+   * 云同步合并时据此判断「哪端 Key 更新」。
+   */
+  keysUpdatedAt: number;
   apiKeys: ApiKeyConfig[];
   records: TokenRecord[];
   settings: PluginSettings;

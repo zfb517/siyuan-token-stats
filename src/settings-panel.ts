@@ -311,6 +311,48 @@ export class SettingsPanel {
     }
   }
 
+  /**
+   * 云同步合并后，将最新设置回填到已打开的设置面板（若面板未打开则自动跳过）。
+   * 若用户正在编辑某个字段（该字段获焦），则跳过该字段以免打断输入。
+   */
+  refreshFromStore(): void {
+    const s = this.store.getSettings();
+    const active = document.activeElement as HTMLElement | null;
+    const isEditing = !!active && active.id?.startsWith("tks-");
+
+    const setCheck = (id: string, val: boolean) => {
+      if (isEditing && active!.id === `tks-${id}`) return;
+      const el = document.getElementById(`tks-${id}`) as HTMLInputElement | null;
+      if (el) el.checked = !!val;
+    };
+    const setVal = (id: string, val: string | number) => {
+      if (isEditing && active!.id === `tks-${id}`) return;
+      const el = document.getElementById(`tks-${id}`) as HTMLInputElement | null;
+      if (el) el.value = String(val);
+    };
+
+    setCheck("matchByUrl", s.matchByUrl ?? true);
+    setCheck("interceptExternalAPIs", s.interceptExternalAPIs);
+    setCheck("blockOnQuotaExceeded", s.blockOnQuotaExceeded);
+    setCheck("abortStreamOnExceeded", s.abortStreamOnExceeded);
+    setCheck("showNotifications", s.showNotifications);
+    setCheck("debugLogging", s.debugLogging ?? false);
+    setVal("max-records", s.maxRecords);
+    setVal("globalQuotaLimit", s.globalQuotaLimit);
+    setVal("globalAlertThreshold", s.globalAlertThreshold);
+    setVal("globalUsedTokensOffset", s.globalUsedTokensOffset);
+    setVal("globalUsedInputTokensOffset", s.globalUsedInputTokensOffset);
+    setVal("globalUsedOutputTokensOffset", s.globalUsedOutputTokensOffset);
+    if (!(isEditing && active!.id === "tks-quotaResetCycle")) {
+      const cyc = document.getElementById("tks-quotaResetCycle") as HTMLSelectElement | null;
+      if (cyc) cyc.value = s.quotaResetCycle;
+    }
+    if (!(isEditing && active!.id === "tks-globalQuotaResetCycle")) {
+      const gcyc = document.getElementById("tks-globalQuotaResetCycle") as HTMLSelectElement | null;
+      if (gcyc) gcyc.value = s.globalQuotaResetCycle;
+    }
+  }
+
   /** 确保设置面板 dialog 可滚动 */
   private ensureDialogScrollable(): void {
     // 通过 id 前缀找到我们的设置项，向上找到 dialog 容器并设置滚动

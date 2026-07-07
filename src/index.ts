@@ -36,6 +36,8 @@ export default class TokenStatsPlugin extends Plugin {
   private settingsPanel!: SettingsPanel;
   private styleElement: HTMLStyleElement | null = null;
   private syncHandler: ((e: any) => void) | null = null;
+  private mergeTimer: number | null = null;
+  private merging = false;
 
   async onload(): Promise<void> {
     console.log("[TokenStats] Plugin loading...");
@@ -99,19 +101,26 @@ export default class TokenStatsPlugin extends Plugin {
       const detailStr = typeof e?.detail === "string" ? e.detail : JSON.stringify(e?.detail ?? "");
       console.log("[TokenStats] Sync event received, merging data...", detailStr.substring(0, 100));
       // 延迟 1 秒等待思源完成文件同步写入
-      setTimeout(() => {
-        this.store.mergeFromRemote().catch((err) =>
-          console.warn("[TokenStats] Sync merge failed:", err)
-        );
-      }, 1000);
+      setTimeout(() => this.mergeFromRemote(), 1000);
     };
     this.eventBus.on("sync-end", this.syncHandler);
+
+    // 10. 云同步可能在插件加载前就已结束（尤其移动端/鸿蒙 NEXT 上），
+    //     因此加载后延迟合并一次，并启动周期合并，确保设置/数据一定能跨端收敛。
+    setTimeout(() => this.mergeFromRemote(), 3000);
+    this.mergeTimer = window.setInterval(() => this.mergeFromRemote(), 60000);
 
     console.log("[TokenStats] Plugin loaded successfully.");
   }
 
   onunload(): void {
     console.log("[TokenStats] Plugin unloading...");
+
+    // 停止周期合并
+    if (this.mergeTimer !== null) {
+      clearInterval(this.mergeTimer);
+      this.mergeTimer = null;
+    }
 
     // 移除同步事件监听
     if (this.syncHandler) {
@@ -131,5 +140,23 @@ export default class TokenStatsPlugin extends Plugin {
     this.styleElement = null;
 
     console.log("[TokenStats] Plugin unloaded.");
+  }
+
+  /**
+   * 执行一次云同步合并（带并发锁）。
+   * sync-end、加载后延迟、周期定时器都会调用它；合并后若设置有变更，
+   * 回填到已打开的设置面板。
+   */
+  private async mergeFromRemote(): Promise<void> {
+    if (this.merging) return;
+    this.merging = true;
+    try {
+      const changed = await this.store.mergeFromRemote();
+      if (changed) this.settingsPanel.refreshFromStore();
+    } catch (err) {
+      console.warn("[TokenStats] Sync merge failed:", err);
+    } finally {
+      this.merging = false;
+    }
   }
 }

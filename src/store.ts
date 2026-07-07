@@ -38,6 +38,8 @@ export class Store {
     this.data = {
       version: DATA_VERSION,
       lastSavedAt: 0,
+      settingsUpdatedAt: 0,
+      keysUpdatedAt: 0,
       apiKeys: [],
       records: [],
       settings: { ...DEFAULT_SETTINGS },
@@ -127,6 +129,8 @@ export class Store {
       this.data = {
         version: DATA_VERSION,
         lastSavedAt: parsed.lastSavedAt || 0,
+        settingsUpdatedAt: (parsed as any).settingsUpdatedAt || 0,
+        keysUpdatedAt: (parsed as any).keysUpdatedAt || 0,
         apiKeys: migratedKeys,
         records: parsed.records || [],
         settings: migratedSettings,
@@ -268,30 +272,51 @@ export class Store {
    * - Settings: 取 lastSavedAt 较大方的版本
    * - lastSavedAt: 取两者最大值
    */
-  async mergeFromRemote(): Promise<void> {
+  /**
+   * 云同步合并：从磁盘重新读取数据文件（已被同步覆盖），
+   * 与内存中的数据按 ID 合并，避免多设备数据冲突丢失。
+   *
+   * 合并策略：
+   * - Records: 按 ID 取并集，去重后按时间戳排序
+   * - API Keys: 按 ID 取并集；同 ID 冲突时按 keysUpdatedAt 取较新方
+   * - Settings: 按 settingsUpdatedAt 取较新方（不再用全局 lastSavedAt，
+   *   否则本端任何一次 Token 记录保存都会刷新 lastSavedAt，导致把对端更新的设置覆盖掉）
+   *
+   * @returns 是否发生了实际合并/变更
+   */
+  async mergeFromRemote(): Promise<boolean> {
     try {
       const response = await fetch(
         `/api/file/getFile?path=${encodeURIComponent(STORAGE_PATH)}`
       );
-      if (!response.ok) return;
+      if (!response.ok) return false;
       const text = await response.text();
-      if (!text) return;
+      if (!text) return false;
 
       const remote = JSON.parse(text) as Partial<PluginData>;
-      if (!remote) return;
+      if (!remote) return false;
 
       const local = this.data;
       const remoteLastSavedAt = remote.lastSavedAt || 0;
       const localLastSavedAt = local.lastSavedAt || 0;
+      const remoteSettingsUpdatedAt = (remote as any).settingsUpdatedAt || 0;
+      const remoteKeysUpdatedAt = (remote as any).keysUpdatedAt || 0;
+      const localSettingsUpdatedAt = local.settingsUpdatedAt || 0;
+      const localKeysUpdatedAt = local.keysUpdatedAt || 0;
 
-      // 如果远程数据和本地完全一致（未变化），跳过
-      if (remoteLastSavedAt === localLastSavedAt && remoteLastSavedAt > 0) {
+      // 如果远程数据与本地完全一致（未变化），跳过
+      if (
+        remoteLastSavedAt === localLastSavedAt &&
+        remoteSettingsUpdatedAt === localSettingsUpdatedAt &&
+        remoteKeysUpdatedAt === localKeysUpdatedAt &&
+        remoteLastSavedAt > 0
+      ) {
         console.log("[TokenStats] Sync merge: data unchanged, skipping.");
-        return;
+        return false;
       }
 
       console.log(
-        `[TokenStats] Sync merge: local ${localLastSavedAt}, remote ${remoteLastSavedAt}`
+        `[TokenStats] Sync merge: local ls=${localLastSavedAt} lset=${localSettingsUpdatedAt} lkey=${localKeysUpdatedAt}, remote rs=${remoteLastSavedAt} rset=${remoteSettingsUpdatedAt} rkey=${remoteKeysUpdatedAt}`
       );
 
       // ── 合并 Records：按 ID 并集去重 ──
@@ -311,27 +336,32 @@ export class Store {
           ? mergedRecords.slice(-max)
           : mergedRecords;
 
-      // ── 合并 API Keys：按 ID 并集，冲突取较新方 ──
+      // ── 合并 API Keys：按 ID 并集，冲突按 keysUpdatedAt 取较新方 ──
       const remoteKeys = remote.apiKeys || [];
       const keyMap = new Map<string, ApiKeyConfig>();
-      // 先放入较旧方的数据，再用较新方覆盖
-      const localIsNewer = localLastSavedAt >= remoteLastSavedAt;
-      const olderKeys = localIsNewer ? remoteKeys : local.apiKeys;
-      const newerKeys = localIsNewer ? local.apiKeys : remoteKeys;
+      const localKeysNewer = localKeysUpdatedAt >= remoteKeysUpdatedAt;
+      const olderKeys = localKeysNewer ? remoteKeys : local.apiKeys;
+      const newerKeys = localKeysNewer ? local.apiKeys : remoteKeys;
       for (const k of olderKeys) keyMap.set(k.id, k);
       for (const k of newerKeys) keyMap.set(k.id, k);
 
       const mergedKeys = Array.from(keyMap.values());
 
-      // ── 合并 Settings：取较新方 ──
-      const mergedSettings = localIsNewer
+      // ── 合并 Settings：按 settingsUpdatedAt 取较新方 ──
+      const localSettingsNewer = localSettingsUpdatedAt >= remoteSettingsUpdatedAt;
+      const mergedSettings = localSettingsNewer
         ? { ...DEFAULT_SETTINGS, ...local.settings }
         : { ...DEFAULT_SETTINGS, ...remote.settings };
+
+      const mergedSettingsUpdatedAt = Math.max(localSettingsUpdatedAt, remoteSettingsUpdatedAt);
+      const mergedKeysUpdatedAt = Math.max(localKeysUpdatedAt, remoteKeysUpdatedAt);
 
       // 写入合并结果
       this.data = {
         version: DATA_VERSION,
         lastSavedAt: Math.max(localLastSavedAt, remoteLastSavedAt),
+        settingsUpdatedAt: mergedSettingsUpdatedAt,
+        keysUpdatedAt: mergedKeysUpdatedAt,
         apiKeys: mergedKeys,
         records: trimmedRecords,
         settings: mergedSettings,
@@ -343,8 +373,10 @@ export class Store {
       console.log(
         `[TokenStats] Sync merge complete: ${mergedKeys.length} keys, ${trimmedRecords.length} records.`
       );
+      return true;
     } catch (e) {
       console.warn("[TokenStats] Sync merge failed:", e);
+      return false;
     }
   }
 
@@ -358,6 +390,7 @@ export class Store {
 
   addApiKey(key: ApiKeyConfig): void {
     this.data.apiKeys.push(key);
+    this.data.keysUpdatedAt = Date.now();
     this.scheduleSave();
   }
 
@@ -365,12 +398,14 @@ export class Store {
     const idx = this.data.apiKeys.findIndex((k) => k.id === id);
     if (idx >= 0) {
       this.data.apiKeys[idx] = { ...this.data.apiKeys[idx], ...updates };
+      this.data.keysUpdatedAt = Date.now();
       this.scheduleSave();
     }
   }
 
   deleteApiKey(id: string): void {
     this.data.apiKeys = this.data.apiKeys.filter((k) => k.id !== id);
+    this.data.keysUpdatedAt = Date.now();
     this.scheduleSave();
   }
 
@@ -427,12 +462,14 @@ export class Store {
 
   updateSettings(updates: Partial<PluginSettings>): void {
     this.data.settings = { ...this.data.settings, ...updates };
+    this.data.settingsUpdatedAt = Date.now();
     this.scheduleSave();
   }
 
   /** 重置设置为默认值，保留 API Key 和调用记录不变 */
   resetSettings(): void {
     this.data.settings = { ...DEFAULT_SETTINGS };
+    this.data.settingsUpdatedAt = Date.now();
     this.scheduleSave();
   }
 
