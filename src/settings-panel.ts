@@ -411,6 +411,7 @@ export class SettingsPanel {
   ): void {
     const container = dialog.element.querySelector("#tks-price-editor") as HTMLElement;
     if (!container) return;
+    const recalc = this.store.getSettings().recalcCostOnPriceChange !== false;
 
     const makeRow = (model: string, input: number, output: number): string => `
       <div class="tks-price-row">
@@ -447,6 +448,10 @@ export class SettingsPanel {
         </select>
       </div>
       <div class="tks-price-hint">模型名不区分大小写，保存时自动归一化为小写。</div>
+      <div class="tks-price-opt">
+        <label class="tks-price-opt-label"><input type="checkbox" id="tks-price-recalc" ${recalc ? "checked" : ""} /> 单价变更后自动重算历史费用</label>
+        <span class="tks-price-opt-hint">开启后仪表盘与记录费用随单价实时更新；关闭则每条记录的费用在生成时固定，不再随单价变化。</span>
+      </div>
       <div class="tks-price-header">
         <span class="tks-price-hd-model">模型名称</span>
         <span class="tks-price-hd-input">输入/1K</span>
@@ -546,7 +551,8 @@ export class SettingsPanel {
         }
       });
       const cur = (container.querySelector("#tks-price-currency") as HTMLSelectElement)?.value || "¥";
-      this.store.updateSettings({ currency: cur, modelPrices: finalPrices, pricePacks: finalPacks });
+      const recalc = (container.querySelector("#tks-price-recalc") as HTMLInputElement)?.checked ?? true;
+      this.store.updateSettings({ currency: cur, modelPrices: finalPrices, pricePacks: finalPacks, recalcCostOnPriceChange: recalc });
       this.store.save();
       dialog.destroy();
       showMessage("费用配置已保存", 2000, "info");

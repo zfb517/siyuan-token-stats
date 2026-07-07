@@ -70,6 +70,8 @@ export interface TokenRecord {
   timestamp: number;
   requestTime: number;
   success: boolean;
+  /** 费用快照（仅当关闭「单价变更后自动重算」时写入，用于冻结当时费用；开启自动重算时为 undefined 实时计算） */
+  cost?: number;
 }
 
 /** 限额重置周期 */
@@ -113,6 +115,12 @@ export interface PluginSettings {
   debugLogging?: boolean;
   /** 费用估算货币符号，默认 ¥ */
   currency: string;
+  /**
+   * 单价变更后是否自动重算历史费用。
+   * true（默认）：仪表盘与记录表的费用始终按当前单价实时计算，改单价后立即生效；
+   * false：每条记录在生成时把费用快照写入 record.cost，之后固定不变。
+   */
+  recalcCostOnPriceChange: boolean;
   /** 每模型单价（每 1K tokens），键为模型名小写归一化 */
   modelPrices: Record<string, ModelPrice>;
   /** 资源包单价：一个包涵盖多个模型，包内模型共用同一单价 */

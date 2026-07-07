@@ -30,6 +30,7 @@ const DEFAULT_SETTINGS: PluginSettings = {
   trendAggregation: "daily",
   debugLogging: false,
   currency: "¥",
+  recalcCostOnPriceChange: true,
   modelPrices: {},
   pricePacks: [],
 };
@@ -507,6 +508,10 @@ export class Store {
         return;
       }
     }
+    // 关闭「单价变更后自动重算」时，把当前费用写入记录作为固定快照
+    if (this.data.settings.recalcCostOnPriceChange === false) {
+      record.cost = this.calcCost(record.model, record.inputTokens, record.outputTokens);
+    }
     recs.push(record);
     // 超出上限时裁剪旧记录
     const max = this.data.settings.maxRecords;
@@ -613,6 +618,19 @@ export class Store {
   formatCost(cost: number): string {
     const cur = this.getCurrency();
     return `${cur}${cost.toFixed(4)}`;
+  }
+
+  /**
+   * 获取某条记录应显示的费用。
+   * - 开启「单价变更后自动重算」（默认）：始终按当前单价实时计算，历史记录随单价浮动；
+   * - 关闭：优先返回记录生成时写入的快照 record.cost，无快照的旧记录回退实时计算。
+   */
+  getRecordCost(r: TokenRecord): number {
+    if (this.data.settings.recalcCostOnPriceChange !== false) {
+      return this.calcCost(r.model, r.inputTokens, r.outputTokens);
+    }
+    if (typeof r.cost === "number") return r.cost;
+    return this.calcCost(r.model, r.inputTokens, r.outputTokens);
   }
 
   // ─── Export ───

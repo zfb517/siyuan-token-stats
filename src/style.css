@@ -641,6 +641,32 @@
   color: var(--b3-theme-on-surface-light, #999);
   line-height: 1.5;
 }
+.tks-price-opt {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  background: var(--b3-theme-background-light, #f5f5f5);
+  border-radius: 4px;
+}
+.tks-price-opt-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.tks-price-opt-label input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+}
+.tks-price-opt-hint {
+  font-size: 11px;
+  color: var(--b3-theme-on-surface-light, #999);
+  line-height: 1.4;
+}
 .tks-price-list {
   display: flex;
   flex-direction: column;

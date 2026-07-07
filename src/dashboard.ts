@@ -159,7 +159,7 @@ export class Dashboard {
       summary.totalTokens += r.totalTokens;
       summary.totalInputTokens += r.inputTokens;
       summary.totalOutputTokens += r.outputTokens;
-      summary.totalCost += this.store.calcCost(r.model, r.inputTokens, r.outputTokens);
+      summary.totalCost += this.store.getRecordCost(r);
       totalTime += r.requestTime;
 
       if (r.success) {
@@ -185,7 +185,7 @@ export class Dashboard {
       summary.modelStats[modelKey].tokens += r.totalTokens;
       summary.modelStats[modelKey].inputTokens += r.inputTokens;
       summary.modelStats[modelKey].outputTokens += r.outputTokens;
-      summary.modelStats[modelKey].cost += this.store.calcCost(r.model, r.inputTokens, r.outputTokens);
+      summary.modelStats[modelKey].cost += this.store.getRecordCost(r);
     }
 
     summary.averageRequestTime =
@@ -526,7 +526,7 @@ export class Dashboard {
         <td>${r.inputTokens.toLocaleString()}</td>
         <td>${r.outputTokens.toLocaleString()}</td>
         <td><strong>${r.totalTokens.toLocaleString()}</strong></td>
-        <td>${this.store.hasAnyPrice() ? this.store.formatCost(this.store.calcCost(r.model, r.inputTokens, r.outputTokens)) : "—"}</td>
+        <td>${this.store.hasAnyPrice() ? this.store.formatCost(this.store.getRecordCost(r)) : "—"}</td>
         <td>${r.requestTime}ms</td>
         <td>${r.success ? "✅" : "❌"}</td>
       </tr>
