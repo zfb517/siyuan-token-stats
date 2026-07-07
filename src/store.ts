@@ -2,7 +2,7 @@
  * 数据持久化层
  * 使用思源的文件 API 将数据存储在 data/storage/siyuan-token-stats/ 下。
  */
-import type { PluginData, TokenRecord, ApiKeyConfig, PluginSettings, ModelPrice } from "./types";
+import type { PluginData, TokenRecord, ApiKeyConfig, PluginSettings, ModelPrice, PricePack } from "./types";
 
 const STORAGE_PATH = "data/storage/siyuan-token-stats/data.json";
 const BAK_PATH = "data/storage/siyuan-token-stats/data.json.bak";
@@ -31,6 +31,7 @@ const DEFAULT_SETTINGS: PluginSettings = {
   debugLogging: false,
   currency: "¥",
   modelPrices: {},
+  pricePacks: [],
 };
 
 export class Store {
@@ -49,99 +50,139 @@ export class Store {
     };
   }
 
+  /** 读取单个文件来源（失败返回 null） */
+  private async readSource(path: string): Promise<Partial<PluginData> | null> {
+    try {
+      const response = await fetch(`/api/file/getFile?path=${encodeURIComponent(path)}`);
+      if (!response.ok) return null;
+      const text = await response.text();
+      if (!text) return null;
+      const parsed = JSON.parse(text) as Partial<PluginData>;
+      if (parsed && parsed.lastSavedAt) return parsed;
+    } catch {
+      // 读取失败
+    }
+    return null;
+  }
+
   async load(): Promise<void> {
     try {
-      // 尝试从主存储路径 (E) 读取
-      let parsed: Partial<PluginData> | null = null;
+      // 同时读取三处来源：主存储 (E)、插件目录备份 (F)、localStorage
+      const eParsed = await this.readSource(STORAGE_PATH);
+      const fParsed = await this.readSource(PLUGIN_DIR_PATH);
+      let lsParsed: Partial<PluginData> | null = null;
       try {
-        const response = await fetch(`/api/file/getFile?path=${encodeURIComponent(STORAGE_PATH)}`);
-        if (response.ok) {
-          const text = await response.text();
-          if (text) parsed = JSON.parse(text) as Partial<PluginData>;
+        const ls = localStorage.getItem(LS_KEY);
+        if (ls) {
+          const fromLs = JSON.parse(ls) as Partial<PluginData>;
+          if (fromLs && fromLs.lastSavedAt) lsParsed = fromLs;
         }
       } catch {
-        // E 读取失败，继续尝试其他路径
+        // localStorage 读取失败
       }
 
-      // 如果主存储没有，尝试从插件目录备份 (F) 读取
-      if (!parsed) {
-        try {
-          const response = await fetch(`/api/file/getFile?path=${encodeURIComponent(PLUGIN_DIR_PATH)}`);
-          if (response.ok) {
-            const text = await response.text();
-            if (text) {
-              const fromF = JSON.parse(text) as Partial<PluginData>;
-              if (fromF && fromF.lastSavedAt) {
-                console.log("[TokenStats] Main storage missing, recovered from plugin directory backup.");
-                parsed = fromF;
-              }
-            }
-          }
-        } catch {
-          // F 读取失败
-        }
-      }
-
-      // 如果文件路径都读不到，尝试从 localStorage 恢复（第三重备份）
-      if (!parsed) {
-        try {
-          const ls = localStorage.getItem(LS_KEY);
-          if (ls) {
-            const fromLs = JSON.parse(ls) as Partial<PluginData>;
-            if (fromLs && fromLs.lastSavedAt) {
-              console.log("[TokenStats] Recovered data from localStorage.");
-              parsed = fromLs;
-            }
-          }
-        } catch {
-          // localStorage 读取失败
-        }
-      }
-
-      if (!parsed) {
-        console.log("[TokenStats] No existing data file, starting fresh.");
+      const sources = [eParsed, fParsed, lsParsed].filter(Boolean) as Partial<PluginData>[];
+      if (sources.length === 0) {
+        console.log("[TokenStats] No existing data in any source, starting fresh.");
         return;
       }
 
-      // 兼容旧版本：将旧版 siyuan provider 改为用户可自定义名称，并补全新增字段默认值
-      const migratedKeys = (parsed.apiKeys || []).map((k) => {
+      // ── 关键修复：三处来源做「并集合并」，只要任一来源保留了 Key，就不会丢失 ──
+      // 旧逻辑是「E 优先、F/localStorage 仅作兜底」，一旦 E 被清空/覆盖（如集市开关插件
+      // 时云同步覆盖了 data/storage），而 F/localStorage 仍含 Key，旧逻辑会直接丢弃它们。
+      // 现在改为：所有来源中的 Key 按 id 取并集，冲突时取 keysUpdatedAt 较新的一方。
+
+      // 合并 API Keys：按 id 并集，冲突取 keysUpdatedAt 较新者（相等时优先保留有密钥串的）
+      const keyMap = new Map<string, ApiKeyConfig>();
+      const putKey = (k: ApiKeyConfig) => {
+        const exist = keyMap.get(k.id);
+        if (!exist) {
+          keyMap.set(k.id, k);
+          return;
+        }
+        const existTs = (exist as any).keysUpdatedAt || 0;
+        const newTs = (k as any).keysUpdatedAt || 0;
+        if (newTs > existTs || (newTs === existTs && (!exist.keyFull && k.keyFull))) {
+          keyMap.set(k.id, k);
+        }
+      };
+      for (const src of sources) {
+        for (const k of src.apiKeys || []) putKey(k);
+      }
+      const mergedKeys = Array.from(keyMap.values());
+
+      // 合并 Records：按 id 取并集，去重
+      const recordMap = new Map<string, TokenRecord>();
+      for (const src of sources) {
+        for (const r of src.records || []) {
+          if (!recordMap.has(r.id)) recordMap.set(r.id, r);
+        }
+      }
+      const mergedRecords = Array.from(recordMap.values()).sort(
+        (a, b) => a.timestamp - b.timestamp
+      );
+      const maxRecords = (() => {
+        // 取各来源 settings.maxRecords 的最大值作为裁剪上限
+        let m = 5000;
+        for (const src of sources) {
+          const v = (src.settings as any)?.maxRecords;
+          if (typeof v === "number" && v > m) m = v;
+        }
+        return m;
+      })();
+      const trimmedRecords =
+        mergedRecords.length > maxRecords
+          ? mergedRecords.slice(-maxRecords)
+          : mergedRecords;
+
+      // 合并 Settings：取 settingsUpdatedAt 最大者，再与默认值合并
+      let bestSettingsSrc: Partial<PluginData> = sources[0];
+      for (const src of sources) {
+        if ((src as any).settingsUpdatedAt > (bestSettingsSrc as any).settingsUpdatedAt) {
+          bestSettingsSrc = src;
+        }
+      }
+      const rawSettings = (bestSettingsSrc.settings || {}) as Record<string, any>;
+      const migratedSettings = { ...DEFAULT_SETTINGS, ...rawSettings };
+      if ("autoDetectSiYuanAI" in rawSettings) {
+        migratedSettings.matchByUrl = rawSettings.autoDetectSiYuanAI;
+      }
+
+      // 兼容旧版本字段补全
+      const migratedKeys = mergedKeys.map((k) => {
         const migrated = { ...k };
         if (migrated.id === "siyuan-built-in" && migrated.provider === "siyuan") {
           migrated.provider = migrated.baseUrl ? migrated.baseUrl : "SiYuan AI";
         }
-        // v1.3.0 新增偏移量字段：旧数据补全默认值 0
         if (migrated.usedTokensOffset === undefined) migrated.usedTokensOffset = 0;
         if (migrated.usedInputTokensOffset === undefined) migrated.usedInputTokensOffset = 0;
         if (migrated.usedOutputTokensOffset === undefined) migrated.usedOutputTokensOffset = 0;
-        // v1.3.8 新增关联模型字段：旧数据补全默认值空数组
         if (!Array.isArray(migrated.models)) migrated.models = [];
         return migrated;
       });
 
-      // 兼容旧版本：autoDetectSiYuanAI 改为 matchByUrl
-      const migratedSettings = {
-        ...DEFAULT_SETTINGS,
-        ...parsed.settings,
-      };
-      if ("autoDetectSiYuanAI" in (parsed.settings || {})) {
-        const oldSettings = parsed.settings as Record<string, any>;
-        migratedSettings.matchByUrl = oldSettings.autoDetectSiYuanAI;
-      }
+      // 时间戳取各来源最大值
+      const maxLastSavedAt = Math.max(0, ...sources.map((s) => s.lastSavedAt || 0));
+      const maxSettingsUpdatedAt = Math.max(0, ...sources.map((s) => (s as any).settingsUpdatedAt || 0));
+      const maxKeysUpdatedAt = Math.max(0, ...sources.map((s) => (s as any).keysUpdatedAt || 0));
 
-      // 合并加载的数据，保证默认值
       this.data = {
         version: DATA_VERSION,
-        lastSavedAt: parsed.lastSavedAt || 0,
-        settingsUpdatedAt: (parsed as any).settingsUpdatedAt || 0,
-        keysUpdatedAt: (parsed as any).keysUpdatedAt || 0,
+        lastSavedAt: maxLastSavedAt,
+        settingsUpdatedAt: maxSettingsUpdatedAt,
+        keysUpdatedAt: maxKeysUpdatedAt,
         apiKeys: migratedKeys,
-        records: parsed.records || [],
+        records: trimmedRecords,
         settings: migratedSettings,
       };
 
       console.log(
-        `[TokenStats] Loaded: ${this.data.apiKeys.length} keys, ${this.data.records.length} records.`
+        `[TokenStats] Loaded (merged ${sources.length} source(s)): ${this.data.apiKeys.length} keys, ${this.data.records.length} records.`
       );
+
+      // 合并后若发现内存数据与任一磁盘来源不一致（例如集市开关插件后 E 被覆盖），
+      // 立即落盘，确保下次加载能直接命中最新数据。
+      this.save().catch((e) => console.error("[TokenStats] Post-load save failed:", e));
     } catch (e) {
       console.warn("[TokenStats] Failed to load data, starting fresh:", e);
     }
@@ -488,17 +529,34 @@ export class Store {
     return (model || "").toLowerCase().trim();
   }
 
-  /** 获取某模型的单价配置（未配置返回 null） */
+  /** 获取某模型的单价配置（未配置返回 null）。
+   *  优先级：单模型单价(modelPrices) > 资源包(pricePacks，按包内模型列表匹配)。 */
   getModelPrice(model: string): ModelPrice | null {
     const key = this.normalizeModelKey(model);
     if (!key) return null;
     const map = this.data.settings.modelPrices || {};
-    return map[key] ?? null;
+    if (map[key]) return map[key];
+    const pack = this.findPackForModel(key);
+    if (pack) return { input: pack.input, output: pack.output };
+    return null;
   }
 
-  /** 是否存在任意模型单价配置 */
+  /** 查找涵盖指定模型的资源包（按归一化模型名精确匹配包内 models 列表） */
+  findPackForModel(normalizedModel: string): PricePack | null {
+    const packs = this.data.settings.pricePacks || [];
+    for (const p of packs) {
+      if (!Array.isArray(p.models)) continue;
+      if (p.models.some((m) => this.normalizeModelKey(m) === normalizedModel)) {
+        return p;
+      }
+    }
+    return null;
+  }
+
+  /** 是否存在任意模型单价或资源包配置 */
   hasAnyPrice(): boolean {
-    return Object.keys(this.data.settings.modelPrices || {}).length > 0;
+    if (Object.keys(this.data.settings.modelPrices || {}).length > 0) return true;
+    return (this.data.settings.pricePacks || []).length > 0;
   }
 
   /**

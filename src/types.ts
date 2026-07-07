@@ -10,6 +10,23 @@ export interface ModelPrice {
   output: number;
 }
 
+/**
+ * 资源包：一个资源包可涵盖多个模型，包内所有模型共用同一输入/输出单价。
+ * 适用于「某套餐内含多个模型」的场景（如通义千问资源包涵盖 qwen-turbo / qwen-plus / qwen-max）。
+ * 费用计算时优先用单模型单价（modelPrices），未命中时再按资源包匹配。
+ */
+export interface PricePack {
+  id: string;
+  /** 资源包名称（仅展示用） */
+  name: string;
+  /** 每 1K 输入 tokens 价格 */
+  input: number;
+  /** 每 1K 输出 tokens 价格 */
+  output: number;
+  /** 该资源包涵盖的模型名列表（保存时归一化为小写，匹配时忽略大小写） */
+  models: string[];
+}
+
 /** API Key 配置 */
 export interface ApiKeyConfig {
   id: string;
@@ -96,6 +113,8 @@ export interface PluginSettings {
   currency: string;
   /** 每模型单价（每 1K tokens），键为模型名小写归一化 */
   modelPrices: Record<string, ModelPrice>;
+  /** 资源包单价：一个包涵盖多个模型，包内模型共用同一单价 */
+  pricePacks: PricePack[];
 }
 
 /** 完整持久化数据 */

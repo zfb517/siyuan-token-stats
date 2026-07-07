@@ -5,7 +5,7 @@
 import { Setting, Dialog, showMessage, confirm, getFrontend } from "siyuan";
 import type { Store } from "./store";
 import type { KeyManager } from "./key-manager";
-import type { ApiKeyConfig, QuotaResetCycle, ModelPrice } from "./types";
+import type { ApiKeyConfig, QuotaResetCycle, ModelPrice, PricePack } from "./types";
 
 /** 转义 HTML 特殊字符，防止 XSS */
 function esc(str: string): string {
@@ -221,7 +221,7 @@ export class SettingsPanel {
     // ─── 费用估算配置 ───
     setting.addItem({
       title: "费用估算配置",
-      description: "设置每模型单价（每 1K tokens 的输入/输出价格）与货币符号，仪表盘将显示估算费用",
+      description: "设置每模型单价（每 1K tokens 的输入/输出价格）与资源包（一个包涵盖多个模型），仪表盘将显示估算费用",
       actionElement: this.createButton("配置", () => this.openPriceEditor()),
     });
 
@@ -400,10 +400,15 @@ export class SettingsPanel {
       content: `<div id="tks-price-editor" class="tks-price-editor"></div>`,
     });
 
-    setTimeout(() => this.renderPriceEditor(dialog, { ...s.modelPrices }, s.currency || "¥"), 50);
+    setTimeout(() => this.renderPriceEditor(dialog, { ...s.modelPrices }, s.currency || "¥", (s.pricePacks || []).map((p) => ({ ...p, models: [...p.models] }))), 50);
   }
 
-  private renderPriceEditor(dialog: Dialog, prices: Record<string, ModelPrice>, currency: string): void {
+  private renderPriceEditor(
+    dialog: Dialog,
+    prices: Record<string, ModelPrice>,
+    currency: string,
+    packs: PricePack[]
+  ): void {
     const container = dialog.element.querySelector("#tks-price-editor") as HTMLElement;
     if (!container) return;
 
@@ -416,9 +421,21 @@ export class SettingsPanel {
       </div>
     `;
 
+    const makePackRow = (pack: PricePack): string => `
+      <div class="tks-pack-row" data-pack-id="${esc(pack.id)}">
+        <input type="text" class="b3-text-field tks-pack-name" value="${esc(pack.name)}" placeholder="资源包名（如 通义千问资源包）" />
+        <input type="number" step="0.0001" min="0" class="b3-text-field tks-pack-input" value="${esc(String(pack.input))}" placeholder="输入/1K" />
+        <input type="number" step="0.0001" min="0" class="b3-text-field tks-pack-output" value="${esc(String(pack.output))}" placeholder="输出/1K" />
+        <input type="text" class="b3-text-field tks-pack-models" value="${esc((pack.models || []).join(", "))}" placeholder="涵盖模型，逗号分隔" />
+        <button class="b3-button b3-button--small b3-button--danger tks-pack-del" title="删除">✕</button>
+      </div>
+    `;
+
     const initialRows = Object.entries(prices)
       .map(([m, p]) => makeRow(m, p.input, p.output))
       .join("");
+
+    const initialPacks = packs.map((p) => makePackRow(p)).join("");
 
     container.innerHTML = `
       <div class="tks-price-head">
@@ -428,15 +445,22 @@ export class SettingsPanel {
           <option value="$" ${currency === "$" ? "selected" : ""}>$ (美元)</option>
         </select>
       </div>
-      <div class="tks-price-hint">价格单位：每 1K tokens 的货币金额。模型名不区分大小写，保存时自动归一化为小写。</div>
+      <div class="tks-price-hint">请依次填写模型名称、输入单价、输出单价。价格单位：每 1K tokens 的货币金额；模型名不区分大小写，保存时自动归一化为小写。</div>
+      <div class="tks-price-section-title">按模型单价</div>
       <div class="tks-price-list" id="tks-price-list">${initialRows || '<div class="tks-price-empty">尚未配置任何模型单价</div>'}</div>
       <div class="tks-price-toolbar">
         <button class="b3-button b3-button--text" id="tks-price-add">+ 添加模型</button>
+      </div>
+      <div class="tks-price-section-title">资源包（一个资源包可涵盖多个模型，包内模型共用同一单价）</div>
+      <div class="tks-pack-list" id="tks-pack-list">${initialPacks || '<div class="tks-price-empty">尚未配置任何资源包</div>'}</div>
+      <div class="tks-price-toolbar">
+        <button class="b3-button b3-button--text" id="tks-pack-add">+ 添加资源包</button>
         <button class="b3-button b3-button--text" id="tks-price-save">保存</button>
       </div>
     `;
 
     const listEl = container.querySelector("#tks-price-list") as HTMLElement;
+    const packListEl = container.querySelector("#tks-pack-list") as HTMLElement;
 
     const bindRow = (row: HTMLElement) => {
       row.querySelector(".tks-price-del")?.addEventListener("click", () => {
@@ -456,6 +480,31 @@ export class SettingsPanel {
       bindRow(listEl.lastElementChild as HTMLElement);
     });
 
+    const bindPackRow = (row: HTMLElement) => {
+      row.querySelector(".tks-pack-del")?.addEventListener("click", () => {
+        row.remove();
+        if (packListEl.querySelectorAll(".tks-pack-row").length === 0) {
+          packListEl.innerHTML = '<div class="tks-price-empty">尚未配置任何资源包</div>';
+        }
+      });
+    };
+
+    packListEl.querySelectorAll(".tks-pack-row").forEach((r) => bindPackRow(r as HTMLElement));
+
+    container.querySelector("#tks-pack-add")?.addEventListener("click", () => {
+      const empty = packListEl.querySelector(".tks-price-empty");
+      if (empty) empty.remove();
+      const newPack: PricePack = {
+        id: `pack-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+        name: "",
+        input: 0,
+        output: 0,
+        models: [],
+      };
+      packListEl.insertAdjacentHTML("beforeend", makePackRow(newPack));
+      bindPackRow(packListEl.lastElementChild as HTMLElement);
+    });
+
     container.querySelector("#tks-price-save")?.addEventListener("click", () => {
       const finalPrices: Record<string, ModelPrice> = {};
       listEl.querySelectorAll(".tks-price-row").forEach((row) => {
@@ -464,8 +513,22 @@ export class SettingsPanel {
         const output = parseFloat((row.querySelector(".tks-price-output") as HTMLInputElement)?.value || "0") || 0;
         if (model) finalPrices[model] = { input, output };
       });
+      const finalPacks: PricePack[] = [];
+      packListEl.querySelectorAll(".tks-pack-row").forEach((row) => {
+        const id = (row as HTMLElement).dataset.packId || `pack-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+        const name = ((row.querySelector(".tks-pack-name") as HTMLInputElement)?.value || "").trim();
+        const input = parseFloat((row.querySelector(".tks-pack-input") as HTMLInputElement)?.value || "0") || 0;
+        const output = parseFloat((row.querySelector(".tks-pack-output") as HTMLInputElement)?.value || "0") || 0;
+        const models = ((row.querySelector(".tks-pack-models") as HTMLInputElement)?.value || "")
+          .split(/[,，]/)
+          .map((x) => x.trim().toLowerCase())
+          .filter(Boolean);
+        if (name || models.length > 0) {
+          finalPacks.push({ id, name, input, output, models });
+        }
+      });
       const cur = (container.querySelector("#tks-price-currency") as HTMLSelectElement)?.value || "¥";
-      this.store.updateSettings({ currency: cur, modelPrices: finalPrices });
+      this.store.updateSettings({ currency: cur, modelPrices: finalPrices, pricePacks: finalPacks });
       this.store.save();
       dialog.destroy();
       showMessage("费用配置已保存", 2000, "info");
