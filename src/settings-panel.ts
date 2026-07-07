@@ -440,13 +440,19 @@ export class SettingsPanel {
 
     container.innerHTML = `
       <div class="tks-price-head">
-        <label>货币符号</label>
+        <label>货币类型</label>
         <select id="tks-price-currency" class="b3-select fn__size200">
           <option value="¥" ${currency === "¥" ? "selected" : ""}>¥ (人民币)</option>
           <option value="$" ${currency === "$" ? "selected" : ""}>$ (美元)</option>
         </select>
       </div>
-      <div class="tks-price-hint">请依次填写模型名称、输入单价、输出单价。价格单位：每 1K tokens 的货币金额；模型名不区分大小写，保存时自动归一化为小写。</div>
+      <div class="tks-price-hint">模型名不区分大小写，保存时自动归一化为小写。</div>
+      <div class="tks-price-header">
+        <span class="tks-price-hd-model">模型名称</span>
+        <span class="tks-price-hd-input">输入/1K</span>
+        <span class="tks-price-hd-output">输出/1K</span>
+        <span></span>
+      </div>
       <div class="tks-price-section-title">按模型单价</div>
       <div class="tks-price-list" id="tks-price-list">${initialRows || '<div class="tks-price-empty">尚未配置任何模型单价</div>'}</div>
       <div class="tks-price-toolbar">

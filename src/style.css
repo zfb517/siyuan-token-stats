@@ -624,7 +624,7 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 4px 2px;
+  padding: 16px 20px;
 }
 .tks-price-head {
   display: flex;
@@ -653,6 +653,22 @@
   grid-template-columns: 1fr 110px 110px 36px;
   gap: 8px;
   align-items: center;
+}
+
+/* 按模型单价列表列标题 */
+.tks-price-header {
+  display: grid;
+  grid-template-columns: 1fr 110px 110px 36px;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 0;
+  font-size: 12px;
+  color: var(--b3-theme-on-surface-light, #888);
+  font-weight: 500;
+}
+.tks-price-hd-input,
+.tks-price-hd-output {
+  text-align: center;
 }
 .tks-price-model {
   min-width: 0;
