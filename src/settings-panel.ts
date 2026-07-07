@@ -218,6 +218,38 @@ export class SettingsPanel {
       },
     });
 
+    // ─── 全局费用限额 ───
+    setting.addItem({
+      title: "全局费用限额",
+      description: "当前周期内所有 API 调用的估算总费用超过此金额时触发提醒与拦截（0 = 不开启；需先在「费用估算配置」中设置模型单价）",
+      createActionElement: () => {
+        const input = document.createElement("input");
+        input.type = "number";
+        input.className = "b3-text-field fn__size200";
+        input.id = "tks-globalCostLimit";
+        input.value = String(s.globalCostLimit || 0);
+        input.min = "0";
+        input.step = "1";
+        return input;
+      },
+    });
+
+    setting.addItem({
+      title: "全局费用提醒阈值 (%)",
+      description: "全局费用达到限额的此百分比时弹出提醒（0 = 不提醒）",
+      createActionElement: () => {
+        const input = document.createElement("input");
+        input.type = "number";
+        input.className = "b3-text-field fn__size200";
+        input.id = "tks-globalCostAlertThreshold";
+        input.value = String(s.globalCostAlertThreshold || 0);
+        input.min = "0";
+        input.max = "100";
+        input.step = "5";
+        return input;
+      },
+    });
+
     // ─── 费用估算配置 ───
     setting.addItem({
       title: "费用估算配置",
@@ -298,6 +330,14 @@ export class SettingsPanel {
     const globalUsedInputTokensOffset = Math.max(0, getNum("globalUsedInputTokensOffset"));
     const globalUsedOutputTokensOffset = Math.max(0, getNum("globalUsedOutputTokensOffset"));
 
+    const globalCostLimit = parseFloat(
+      (document.getElementById("tks-globalCostLimit") as HTMLInputElement)?.value || "0"
+    ) || 0;
+    const globalCostAlertThreshold = parseInt(
+      (document.getElementById("tks-globalCostAlertThreshold") as HTMLInputElement)?.value || "0",
+      10
+    ) || 0;
+
     const shouldResetGlobalAlert =
       globalQuotaLimit !== this.store.getSettings().globalQuotaLimit ||
       globalAlertThreshold !== this.store.getSettings().globalAlertThreshold;
@@ -318,10 +358,20 @@ export class SettingsPanel {
       globalUsedTokensOffset,
       globalUsedInputTokensOffset,
       globalUsedOutputTokensOffset,
+      globalCostLimit: Math.max(0, globalCostLimit),
+      globalCostAlertThreshold: Math.max(0, Math.min(100, globalCostAlertThreshold)),
     });
 
     if (shouldResetGlobalAlert) {
       this.keyManager.resetGlobalAlert();
+    }
+
+    const shouldResetCostAlert =
+      globalCostLimit !== this.store.getSettings().globalCostLimit ||
+      globalCostAlertThreshold !== this.store.getSettings().globalCostAlertThreshold;
+
+    if (shouldResetCostAlert) {
+      this.keyManager.resetGlobalCostAlert();
     }
   }
 
@@ -358,6 +408,8 @@ export class SettingsPanel {
     setVal("globalUsedTokensOffset", s.globalUsedTokensOffset);
     setVal("globalUsedInputTokensOffset", s.globalUsedInputTokensOffset);
     setVal("globalUsedOutputTokensOffset", s.globalUsedOutputTokensOffset);
+    setVal("globalCostLimit", s.globalCostLimit);
+    setVal("globalCostAlertThreshold", s.globalCostAlertThreshold);
     if (!(isEditing && active!.id === "tks-quotaResetCycle")) {
       const cyc = document.getElementById("tks-quotaResetCycle") as HTMLSelectElement | null;
       if (cyc) cyc.value = s.quotaResetCycle;

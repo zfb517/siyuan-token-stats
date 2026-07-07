@@ -25,6 +25,8 @@ const DEFAULT_SETTINGS: PluginSettings = {
   globalUsedTokensOffset: 0,
   globalUsedInputTokensOffset: 0,
   globalUsedOutputTokensOffset: 0,
+  globalCostLimit: 0,
+  globalCostAlertThreshold: 0,
   trendDateRangeStart: "",
   trendDateRangeEnd: "",
   trendAggregation: "daily",
@@ -631,6 +633,20 @@ export class Store {
     }
     if (typeof r.cost === "number") return r.cost;
     return this.calcCost(r.model, r.inputTokens, r.outputTokens);
+  }
+
+  /**
+   * 计算当前重置周期内所有记录的总费用（用于费用限额）。
+   * 依赖 keyManager 提供的重置周期边界，因此放在 Store 上供 KeyManager 调用。
+   */
+  getTotalCostInPeriod(records: TokenRecord[], boundary: number): number {
+    let total = 0;
+    for (const r of records) {
+      if (r.timestamp >= boundary) {
+        total += this.getRecordCost(r);
+      }
+    }
+    return total;
   }
 
   // ─── Export ───

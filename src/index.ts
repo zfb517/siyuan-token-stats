@@ -216,6 +216,28 @@ export default class TokenStatsPlugin extends Plugin {
       badge.style.display = "none";
       return;
     }
+
+    // 优先显示费用限额模式（设了 globalCostLimit 时）
+    if (settings.globalCostLimit > 0) {
+      const costPct = this.keyManager.getGlobalCostPercent(settings);
+      const costUsage = this.keyManager.getGlobalCostUsage(settings);
+      const cur = settings.currency || "¥";
+      let text: string;
+      let level: "ok" | "warn" | "danger" | "neutral" = "neutral";
+      text = `${costPct.toFixed(0)}%`;
+      const warn = settings.globalCostAlertThreshold > 0 ? settings.globalCostAlertThreshold : 70;
+      const danger = 90;
+      if (costPct >= danger || this.keyManager.isGlobalCostExceeded(settings)) level = "danger";
+      else if (costPct >= warn) level = "warn";
+      else level = "ok";
+      badge.textContent = text;
+      badge.className = `tks-topbar-badge tks-badge-${level}`;
+      badge.style.display = "inline-block";
+      badge.title = `费用 ${cur}${costUsage.totalCost.toFixed(2)} / ${cur}${settings.globalCostLimit.toFixed(2)}`;
+      return;
+    }
+
+    // Token 限额模式
     const usage = this.keyManager.getGlobalUsage(settings);
     let text: string;
     let level: "ok" | "warn" | "danger" | "neutral" = "neutral";

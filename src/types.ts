@@ -105,6 +105,10 @@ export interface PluginSettings {
   globalUsedInputTokensOffset: number;
   /** 全局手动校准的已用输出 Token 偏移量 */
   globalUsedOutputTokensOffset: number;
+  /** 全局费用限额（货币单位），0 = 不开启 */
+  globalCostLimit: number;
+  /** 全局费用提醒阈值 (0-100)，0 = 不提醒 */
+  globalCostAlertThreshold: number;
   /** Token 趋势图默认开始日期 (yyyy-MM-dd)，空表示自动 */
   trendDateRangeStart: string;
   /** Token 趋势图默认结束日期 (yyyy-MM-dd)，空表示自动 */

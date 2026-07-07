@@ -314,6 +314,92 @@ export class KeyManager {
     this.alertedGlobal = false;
   }
 
+  // ─── 全局费用限额 ───
+
+  /** 全局在当前重置周期内的累计总费用 */
+  getGlobalCostUsage(settings: PluginSettings): { totalCost: number; totalRequests: number } {
+    const boundary = this.getResetBoundary(settings.globalQuotaResetCycle);
+    const records = this.store.getRecords().filter((r) => r.timestamp >= boundary);
+    let totalCost = 0;
+    for (const r of records) {
+      totalCost += this.store.getRecordCost(r);
+    }
+    return { totalCost, totalRequests: records.length };
+  }
+
+  /** 全局剩余费用额度（-1 表示不限） */
+  getGlobalRemainingCost(settings: PluginSettings): number {
+    if (settings.globalCostLimit <= 0) return -1;
+    const usage = this.getGlobalCostUsage(settings);
+    return Math.max(0, settings.globalCostLimit - usage.totalCost);
+  }
+
+  /** 全局费用使用百分比 */
+  getGlobalCostPercent(settings: PluginSettings): number {
+    if (settings.globalCostLimit <= 0) return 0;
+    const usage = this.getGlobalCostUsage(settings);
+    return Math.min(100, (usage.totalCost / settings.globalCostLimit) * 100);
+  }
+
+  /** 全局是否已超出费用限额 */
+  isGlobalCostExceeded(settings: PluginSettings): boolean {
+    if (settings.globalCostLimit <= 0) return false;
+    const usage = this.getGlobalCostUsage(settings);
+    return usage.totalCost >= settings.globalCostLimit;
+  }
+
+  /** 请求前预检：全局当前累计费用 + 预估本次费用是否会超限 */
+  wouldExceedGlobalCostQuota(settings: PluginSettings, estimatedCost: number): boolean {
+    if (settings.globalCostLimit <= 0) return false;
+    const usage = this.getGlobalCostUsage(settings);
+    return usage.totalCost + estimatedCost > settings.globalCostLimit;
+  }
+
+  /** 全局是否达到费用提醒阈值 */
+  isGlobalCostThresholdReached(settings: PluginSettings): boolean {
+    if (settings.globalCostAlertThreshold <= 0 || settings.globalCostLimit <= 0) return false;
+    const usage = this.getGlobalCostUsage(settings);
+    const percent = (usage.totalCost / settings.globalCostLimit) * 100;
+    return percent >= settings.globalCostAlertThreshold;
+  }
+
+  private alertedCostGlobal = false;
+
+  /** 检查全局费用阈值并返回提醒信息 */
+  checkGlobalCostThreshold(
+    settings: PluginSettings,
+    showNotification: (msg: string) => void
+  ): void {
+    if (settings.globalCostLimit <= 0) return;
+
+    // 跨周期重置
+    if (this.alertedCostGlobal && !this.isGlobalCostThresholdReached(settings)) {
+      this.alertedCostGlobal = false;
+    }
+
+    // 达到全局费用阈值提醒
+    if (this.isGlobalCostThresholdReached(settings) && !this.alertedCostGlobal) {
+      this.alertedCostGlobal = true;
+      const usage = this.getGlobalCostUsage(settings);
+      const percent = ((usage.totalCost / settings.globalCostLimit) * 100).toFixed(1);
+      const cur = settings.currency || "¥";
+      const msg = `⚠️ 全局费用提醒：已使用 ${percent}%（${cur}${usage.totalCost.toFixed(2)} / ${cur}${settings.globalCostLimit.toFixed(2)}）`;
+      showNotification(msg);
+    }
+
+    // 全局超出费用限额
+    if (this.isGlobalCostExceeded(settings)) {
+      const cur = settings.currency || "¥";
+      const msg = `⛔ 全局费用限额已用尽（限额 ${cur}${settings.globalCostLimit.toFixed(2)}）`;
+      showNotification(msg);
+    }
+  }
+
+  /** 重置全局费用提醒状态 */
+  resetGlobalCostAlert(): void {
+    this.alertedCostGlobal = false;
+  }
+
   /**
    * 检查所有密钥 + 全局的阈值与限额，并在需要提醒时调用 showNotification。
    * 由定时器与云同步合并后调用，使阈值提醒在「用量经云同步到达本端」时也能触发，
@@ -326,5 +412,6 @@ export class KeyManager {
       if (k.enabled) this.checkThreshold(k.id, showNotification);
     }
     this.checkGlobalThreshold(settings, showNotification);
+    this.checkGlobalCostThreshold(settings, showNotification);
   }
 }
