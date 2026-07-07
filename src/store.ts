@@ -36,6 +36,7 @@ const DEFAULT_SETTINGS: PluginSettings = {
   debugLogging: false,
   currency: "¥",
   recalcCostOnPriceChange: true,
+  syncStatistics: true,
   modelPrices: {},
   pricePacks: [],
 };

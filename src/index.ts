@@ -89,6 +89,7 @@ export default class TokenStatsPlugin extends Plugin {
 
     // 7. 设置面板
     this.settingsPanel = new SettingsPanel(this.store, this.keyManager);
+    this.settingsPanel.onManualSync = () => this.manualSync();
     this.setting = this.settingsPanel.setting;
 
     // 8. 注册命令
@@ -173,9 +174,16 @@ export default class TokenStatsPlugin extends Plugin {
    * 执行一次云同步合并（带并发锁）。
    * sync-end、加载后延迟、周期定时器都会调用它；合并后若设置有变更，
    * 回填到已打开的设置面板。
+   * 受「跨端统计合并」开关约束——关闭时不自动合并（手动同步仍可强制执行）。
    */
   private async mergeFromRemote(): Promise<void> {
-    if (this.merging) return;
+    if (!this.store.getSettings().syncStatistics) return;
+    await this.doMerge();
+  }
+
+  /** 实际执行合并（不含开关判断，供自动合并与手动同步共用） */
+  private async doMerge(): Promise<boolean> {
+    if (this.merging) return false;
     this.merging = true;
     try {
       const changed = await this.store.mergeFromRemote();
@@ -183,11 +191,18 @@ export default class TokenStatsPlugin extends Plugin {
       // 合并后用量可能来自其它设备 → 实时刷新徽标并触发阈值提醒
       this.updateBadge();
       this.checkThresholdsLive();
+      return changed;
     } catch (err) {
       console.warn("[TokenStats] Sync merge failed:", err);
+      return false;
     } finally {
       this.merging = false;
     }
+  }
+
+  /** 手动触发一次跨端统计合并（设置面板「立即同步」按钮调用），不受开关限制 */
+  async manualSync(): Promise<boolean> {
+    return this.doMerge();
   }
 
   /** 初始化顶栏实时用量徽标 */

@@ -131,6 +131,8 @@ export interface PluginSettings {
    * false：每条记录在生成时把费用快照写入 record.cost，之后固定不变。
    */
   recalcCostOnPriceChange: boolean;
+  /** 跨端统计合并：开启后，各端（电脑/鸿蒙/浏览器）通过思源数据同步共享同一套 API Key 时，自动按记录合并多方用量 */
+  syncStatistics: boolean;
   /** 每模型单价（每 1K tokens），键为模型名小写归一化 */
   modelPrices: Record<string, ModelPrice>;
   /** 资源包单价：一个包涵盖多个模型，包内模型共用同一单价 */

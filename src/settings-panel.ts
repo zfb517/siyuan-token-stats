@@ -22,6 +22,8 @@ export class SettingsPanel {
   private store: Store;
   private keyManager: KeyManager;
   setting: Setting;
+  /** 手动同步回调（由插件入口注入，指向 manualSync） */
+  onManualSync: (() => Promise<boolean>) | null = null;
 
   constructor(store: Store, keyManager: KeyManager) {
     this.store = store;
@@ -321,6 +323,19 @@ export class SettingsPanel {
       actionElement: this.createButton("管理 API Key", () => this.openKeyManager()),
     });
 
+    // ─── 跨端统计合并 ───
+    setting.addItem({
+      title: "跨端统计合并",
+      description: "开启后，各端（电脑 / 鸿蒙 / 浏览器）通过思源数据同步共享同一套 API Key 时，自动按记录合并多方 Token 用量，汇总到每一端；关闭则仅统计本端。",
+      createActionElement: () => this.createCheckbox("syncStatistics", s.syncStatistics ?? true),
+    });
+
+    setting.addItem({
+      title: "立即同步统计",
+      description: "手动从同步文件拉取一次其他端的统计记录（例如鸿蒙端打开后一键获取电脑端历史数据），不受上方开关限制。",
+      actionElement: this.createButton("立即同步", () => this.handleManualSync()),
+    });
+
     // ─── 数据管理 ───
     setting.addItem({
       title: "导出统计数据",
@@ -359,6 +374,30 @@ export class SettingsPanel {
     btn.style.fontSize = "14px";
     btn.addEventListener("click", callback);
     return btn;
+  }
+
+  /** 「立即同步」按钮回调：手动触发一次跨端统计合并，并给出结果反馈 */
+  private async handleManualSync(): Promise<void> {
+    const btn = document.activeElement as HTMLButtonElement | null;
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "同步中…";
+    }
+    try {
+      if (!this.onManualSync) {
+        showMessage("同步功能未就绪", 2000, "error");
+        return;
+      }
+      const changed = await this.onManualSync();
+      showMessage(changed ? "已合并其他端统计" : "已是最新，无新数据", 2000, "info");
+    } catch {
+      showMessage("同步失败，请确认思源数据同步已开启", 3000, "error");
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "立即同步";
+      }
+    }
   }
 
   private saveGlobalSettings(): void {
@@ -426,6 +465,7 @@ export class SettingsPanel {
       globalCostResetCycle,
       globalUsedCostOffset,
       customResetDays,
+      syncStatistics: get("syncStatistics"),
     });
 
     if (shouldResetGlobalAlert) {
@@ -470,6 +510,7 @@ export class SettingsPanel {
     setCheck("showNotifications", s.showNotifications);
     setCheck("showTopBarBadge", s.showTopBarBadge);
     setCheck("debugLogging", s.debugLogging ?? false);
+    setCheck("syncStatistics", s.syncStatistics ?? true);
     setVal("max-records", s.maxRecords);
     setVal("globalQuotaLimit", s.globalQuotaLimit);
     setVal("globalAlertThreshold", s.globalAlertThreshold);
