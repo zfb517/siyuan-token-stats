@@ -318,12 +318,14 @@ export class KeyManager {
 
   /** 全局在当前重置周期内的累计总费用 */
   getGlobalCostUsage(settings: PluginSettings): { totalCost: number; totalRequests: number } {
-    const boundary = this.getResetBoundary(settings.globalQuotaResetCycle);
+    const boundary = this.getResetBoundary(settings.globalCostResetCycle);
     const records = this.store.getRecords().filter((r) => r.timestamp >= boundary);
     let totalCost = 0;
     for (const r of records) {
       totalCost += this.store.getRecordCost(r);
     }
+    // 叠加手工校准的已用费用偏移量（用于导入第三方平台历史花费）
+    totalCost += settings.globalUsedCostOffset ?? 0;
     return { totalCost, totalRequests: records.length };
   }
 

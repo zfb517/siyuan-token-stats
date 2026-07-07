@@ -250,6 +250,44 @@ export class SettingsPanel {
       },
     });
 
+    setting.addItem({
+      title: "全局费用重置周期",
+      description: "按周期自动重置全局费用用量统计（独立于「全局限额重置周期」，可与 Token 限额采用不同节奏）",
+      createActionElement: () => {
+        const select = document.createElement("select");
+        select.className = "b3-select fn__size200";
+        select.id = "tks-globalCostResetCycle";
+        const options: { value: QuotaResetCycle; label: string }[] = [
+          { value: "monthly", label: "每月重置" },
+          { value: "daily", label: "每日重置" },
+          { value: "none", label: "永不重置" },
+        ];
+        for (const opt of options) {
+          const el = document.createElement("option");
+          el.value = opt.value;
+          el.textContent = opt.label;
+          if (s.globalCostResetCycle === opt.value) el.selected = true;
+          select.appendChild(el);
+        }
+        return select;
+      },
+    });
+
+    setting.addItem({
+      title: "全局已用费用校准",
+      description: "手动输入从第三方平台导入的历史已花费金额，叠加到全局费用统计中（0 = 不校准；单位与货币类型一致）",
+      createActionElement: () => {
+        const input = document.createElement("input");
+        input.type = "number";
+        input.className = "b3-text-field fn__size200";
+        input.id = "tks-globalUsedCostOffset";
+        input.value = String(s.globalUsedCostOffset || 0);
+        input.min = "0";
+        input.step = "1";
+        return input;
+      },
+    });
+
     // ─── 费用估算配置 ───
     setting.addItem({
       title: "费用估算配置",
@@ -337,6 +375,11 @@ export class SettingsPanel {
       (document.getElementById("tks-globalCostAlertThreshold") as HTMLInputElement)?.value || "0",
       10
     ) || 0;
+    const globalCostResetCycle = (document.getElementById("tks-globalCostResetCycle") as HTMLSelectElement)?.value as QuotaResetCycle || "monthly";
+    const globalUsedCostOffset = Math.max(
+      0,
+      parseFloat((document.getElementById("tks-globalUsedCostOffset") as HTMLInputElement)?.value || "0") || 0
+    );
 
     const shouldResetGlobalAlert =
       globalQuotaLimit !== this.store.getSettings().globalQuotaLimit ||
@@ -360,6 +403,8 @@ export class SettingsPanel {
       globalUsedOutputTokensOffset,
       globalCostLimit: Math.max(0, globalCostLimit),
       globalCostAlertThreshold: Math.max(0, Math.min(100, globalCostAlertThreshold)),
+      globalCostResetCycle,
+      globalUsedCostOffset,
     });
 
     if (shouldResetGlobalAlert) {
@@ -368,7 +413,9 @@ export class SettingsPanel {
 
     const shouldResetCostAlert =
       globalCostLimit !== this.store.getSettings().globalCostLimit ||
-      globalCostAlertThreshold !== this.store.getSettings().globalCostAlertThreshold;
+      globalCostAlertThreshold !== this.store.getSettings().globalCostAlertThreshold ||
+      globalCostResetCycle !== this.store.getSettings().globalCostResetCycle ||
+      globalUsedCostOffset !== this.store.getSettings().globalUsedCostOffset;
 
     if (shouldResetCostAlert) {
       this.keyManager.resetGlobalCostAlert();
@@ -410,6 +457,7 @@ export class SettingsPanel {
     setVal("globalUsedOutputTokensOffset", s.globalUsedOutputTokensOffset);
     setVal("globalCostLimit", s.globalCostLimit);
     setVal("globalCostAlertThreshold", s.globalCostAlertThreshold);
+    setVal("globalUsedCostOffset", s.globalUsedCostOffset);
     if (!(isEditing && active!.id === "tks-quotaResetCycle")) {
       const cyc = document.getElementById("tks-quotaResetCycle") as HTMLSelectElement | null;
       if (cyc) cyc.value = s.quotaResetCycle;
@@ -417,6 +465,10 @@ export class SettingsPanel {
     if (!(isEditing && active!.id === "tks-globalQuotaResetCycle")) {
       const gcyc = document.getElementById("tks-globalQuotaResetCycle") as HTMLSelectElement | null;
       if (gcyc) gcyc.value = s.globalQuotaResetCycle;
+    }
+    if (!(isEditing && active!.id === "tks-globalCostResetCycle")) {
+      const ccyc = document.getElementById("tks-globalCostResetCycle") as HTMLSelectElement | null;
+      if (ccyc) ccyc.value = s.globalCostResetCycle;
     }
   }
 

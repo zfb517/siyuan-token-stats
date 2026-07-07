@@ -27,6 +27,8 @@ const DEFAULT_SETTINGS: PluginSettings = {
   globalUsedOutputTokensOffset: 0,
   globalCostLimit: 0,
   globalCostAlertThreshold: 0,
+  globalCostResetCycle: "monthly",
+  globalUsedCostOffset: 0,
   trendDateRangeStart: "",
   trendDateRangeEnd: "",
   trendAggregation: "daily",
@@ -157,6 +159,10 @@ export class Store {
       const migratedSettings = { ...DEFAULT_SETTINGS, ...rawSettings };
       if ("autoDetectSiYuanAI" in rawSettings) {
         migratedSettings.matchByUrl = rawSettings.autoDetectSiYuanAI;
+      }
+      // 旧版无独立的费用重置周期字段时，继承全局 Token 限额周期，避免老用户行为突变
+      if (!("globalCostResetCycle" in rawSettings) && rawSettings.globalQuotaResetCycle) {
+        migratedSettings.globalCostResetCycle = rawSettings.globalQuotaResetCycle;
       }
 
       // 兼容旧版本字段补全
@@ -429,6 +435,11 @@ export class Store {
       const mergedSettings = localSettingsNewer
         ? { ...DEFAULT_SETTINGS, ...local.settings }
         : { ...DEFAULT_SETTINGS, ...remote.settings };
+      // 旧版无独立的费用重置周期字段时，继承全局 Token 限额周期，避免老用户行为突变
+      const srcSettings = (localSettingsNewer ? local.settings : remote.settings) as Record<string, any> | undefined;
+      if (srcSettings && !("globalCostResetCycle" in srcSettings) && srcSettings.globalQuotaResetCycle) {
+        mergedSettings.globalCostResetCycle = srcSettings.globalQuotaResetCycle;
+      }
 
       const mergedSettingsUpdatedAt = Math.max(localSettingsUpdatedAt, remoteSettingsUpdatedAt);
       const mergedKeysUpdatedAt = Math.max(localKeysUpdatedAt, remoteKeysUpdatedAt);

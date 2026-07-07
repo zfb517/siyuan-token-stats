@@ -109,6 +109,10 @@ export interface PluginSettings {
   globalCostLimit: number;
   /** 全局费用提醒阈值 (0-100)，0 = 不提醒 */
   globalCostAlertThreshold: number;
+  /** 全局费用限额重置周期（独立于全局 Token 限额周期，便于费用按不同节奏结算） */
+  globalCostResetCycle: QuotaResetCycle;
+  /** 全局手工校准的已用费用偏移量（货币单位，用于导入第三方平台历史花费），>= 0 */
+  globalUsedCostOffset: number;
   /** Token 趋势图默认开始日期 (yyyy-MM-dd)，空表示自动 */
   trendDateRangeStart: string;
   /** Token 趋势图默认结束日期 (yyyy-MM-dd)，空表示自动 */
