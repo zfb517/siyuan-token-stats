@@ -202,6 +202,10 @@ export interface DailyStat {
   date: string;
   tokens: number;
   count: number;
+  /** 当日各模型 token 分布，key 为规范化小写模型名 */
+  byModel: Record<string, number>;
+  /** 当日估算费用合计（货币单位） */
+  cost: number;
 }
 
 export interface KeyStat {

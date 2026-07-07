@@ -18,6 +18,16 @@ function esc(str: string): string {
     .replace(/'/g, "&#39;");
 }
 
+/** 根据模型 key 生成稳定的图例/柱状颜色（同模型多处保持一致） */
+function modelColor(key: string): string {
+  let h = 0;
+  for (let i = 0; i < key.length; i++) {
+    h = (h * 31 + key.charCodeAt(i)) >>> 0;
+  }
+  const hue = h % 360;
+  return `hsl(${hue}, 60%, 52%)`;
+}
+
 /** 格式化 yyyy-MM-dd */
 function formatDate(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -247,12 +257,20 @@ export class Dashboard {
 
     const buckets: Record<string, DailyStat> = {};
 
-    const addToBucket = (key: string, tokens: number, count: number) => {
+    const addToBucket = (
+      key: string,
+      tokens: number,
+      count: number,
+      modelKey: string,
+      cost: number
+    ) => {
       if (!buckets[key]) {
-        buckets[key] = { date: key, tokens: 0, count: 0 };
+        buckets[key] = { date: key, tokens: 0, count: 0, byModel: {}, cost: 0 };
       }
       buckets[key].tokens += tokens;
       buckets[key].count += count;
+      buckets[key].byModel[modelKey] = (buckets[key].byModel[modelKey] || 0) + tokens;
+      buckets[key].cost += cost;
     };
 
     for (const r of records) {
@@ -260,14 +278,16 @@ export class Dashboard {
         continue;
       }
       const d = new Date(r.timestamp);
+      const modelKey = (r.model || "unknown").toLowerCase().trim();
+      const cost = this.store.getRecordCost(r);
       if (trendAggregation === "weekly") {
         const ws = getWeekStart(d);
-        addToBucket(formatDate(ws), r.totalTokens, 1);
+        addToBucket(formatDate(ws), r.totalTokens, 1, modelKey, cost);
       } else if (trendAggregation === "monthly") {
         const ms = getMonthStart(d);
-        addToBucket(formatDate(ms), r.totalTokens, 1);
+        addToBucket(formatDate(ms), r.totalTokens, 1, modelKey, cost);
       } else {
-        addToBucket(formatDate(d), r.totalTokens, 1);
+        addToBucket(formatDate(d), r.totalTokens, 1, modelKey, cost);
       }
     }
 
@@ -276,7 +296,6 @@ export class Dashboard {
 
   private renderHTML(s: StatisticsSummary): string {
     const recentRecords = this.store.getRecentRecords(30);
-    const maxDailyTokens = Math.max(...s.dailyStats.map((d) => d.tokens), 1);
     const maxModelTokens = Math.max(
       ...Object.values(s.modelStats).map((m) => m.tokens),
       1
@@ -373,10 +392,16 @@ export class Dashboard {
         <div class="tks-section">
           <h3 class="tks-section-title">📈 Token 趋势</h3>
           ${dateInputs}
+          ${
+            s.dailyStats.length === 0
+              ? '<div class="tks-empty-chart">当前区间内无数据</div>'
+              : `
           <div class="tks-daily-chart">
-            ${s.dailyStats.map((d) => this.renderDailyBar(d, maxDailyTokens, settings.trendAggregation)).join("")}
+            ${this.buildTrendSvg(s, settings.trendAggregation)}
           </div>
-          ${s.dailyStats.length === 0 ? '<div class="tks-empty-chart">当前区间内无数据</div>' : ""}
+          ${this.buildTrendLegend(s)}
+          <div class="tks-trend-caption">柱形按模型堆叠（高度=当日总 Token）；折线为当日估算费用（右轴），未配置单价时为 0</div>`
+          }
         </div>
 
         <!-- 模型分布 -->
@@ -476,23 +501,97 @@ export class Dashboard {
     `;
   }
 
-  private renderDailyBar(d: DailyStat, max: number, aggregation: string): string {
-    const heightPercent = Math.max(2, (d.tokens / max) * 100);
-    let dateLabel = d.date.substring(5); // MM-DD
-    if (aggregation === "weekly") {
-      dateLabel = `W${d.date.substring(5, 7)}${d.date.substring(8, 10)}`;
-    } else if (aggregation === "monthly") {
-      dateLabel = d.date.substring(0, 7); // yyyy-MM
+  /** 趋势图：按模型堆叠的彩色柱 + 当日费用折线（右轴） */
+  private buildTrendSvg(s: StatisticsSummary, aggregation: string): string {
+    const data = s.dailyStats;
+    const n = data.length;
+    if (n === 0) return "";
+    const W = 720, H = 260;
+    const padL = 48, padR = 52, padT = 18, padB = 30;
+    const plotW = W - padL - padR;
+    const plotH = H - padT - padB;
+    const maxTokens = Math.max(...data.map((d) => d.tokens), 1);
+
+    const modelTotals: Record<string, number> = {};
+    for (const d of data) {
+      for (const k of Object.keys(d.byModel)) {
+        modelTotals[k] = (modelTotals[k] || 0) + d.byModel[k];
+      }
     }
-    return `
-      <div class="tks-daily-bar">
-        <div class="tks-daily-value">${d.tokens > 999 ? (d.tokens / 1000).toFixed(1) + "k" : d.tokens}</div>
-        <div class="tks-daily-col">
-          <div class="tks-daily-fill" style="height: ${heightPercent}%"></div>
-        </div>
-        <div class="tks-daily-date">${dateLabel}</div>
-      </div>
-    `;
+    const allModelKeys = Object.keys(modelTotals).sort((a, b) => modelTotals[b] - modelTotals[a]);
+    const maxCost = Math.max(...data.map((d) => d.cost), 0);
+
+    const slot = plotW / n;
+    const barW = Math.min(26, slot * 0.62);
+    const xCenter = (i: number) => padL + slot * (i + 0.5);
+
+    let bars = "";
+    for (let i = 0; i < n; i++) {
+      const d = data[i];
+      const cx = xCenter(i);
+      const bx = cx - barW / 2;
+      let yCur = padT + plotH;
+      for (const k of allModelKeys) {
+        const tk = d.byModel[k] || 0;
+        if (tk <= 0) continue;
+        const segH = (tk / maxTokens) * plotH;
+        yCur -= segH;
+        bars += `<rect x="${bx.toFixed(1)}" y="${yCur.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(0.5, segH).toFixed(1)}" fill="${modelColor(k)}"><title>${esc(k)}: ${tk.toLocaleString()} tokens</title></rect>`;
+      }
+    }
+
+    let line = "";
+    if (maxCost > 0) {
+      const pts = data
+        .map((d, i) => `${xCenter(i).toFixed(1)},${(padT + (1 - d.cost / maxCost) * plotH).toFixed(1)}`)
+        .join(" ");
+      line = `<polyline points="${pts}" fill="none" stroke="#e0556b" stroke-width="2" stroke-linejoin="round"/>`;
+      for (let i = 0; i < n; i++) {
+        const cy = padT + (1 - data[i].cost / maxCost) * plotH;
+        line += `<circle cx="${xCenter(i).toFixed(1)}" cy="${cy.toFixed(1)}" r="2.5" fill="#e0556b"><title>费用: ${esc(this.store.formatCost(data[i].cost))}</title></circle>`;
+      }
+    }
+
+    let grid = "";
+    for (let g = 0; g <= 2; g++) {
+      const y = padT + (plotH * g) / 2;
+      const val = Math.round(maxTokens * (1 - g / 2));
+      grid += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${padL + plotW}" y2="${y.toFixed(1)}" stroke="#e3e3e3" stroke-width="1"/>`;
+      grid += `<text x="${padL - 6}" y="${(y + 3).toFixed(1)}" text-anchor="end" font-size="10" fill="#8a8a8a">${val >= 1000 ? (val / 1000).toFixed(val >= 10000 ? 0 : 1) + "k" : val}</text>`;
+      if (maxCost > 0) {
+        const cval = maxCost * (1 - g / 2);
+        grid += `<text x="${padL + plotW + 6}" y="${(y + 3).toFixed(1)}" text-anchor="start" font-size="10" fill="#e0556b">${esc(this.store.formatCost(cval))}</text>`;
+      }
+    }
+
+    const step = Math.max(1, Math.ceil(n / 16));
+    let xlabels = "";
+    for (let i = 0; i < n; i++) {
+      if (i % step !== 0 && i !== n - 1) continue;
+      const d = data[i];
+      let lab = d.date.substring(5);
+      if (aggregation === "monthly") lab = d.date.substring(0, 7);
+      else if (aggregation === "weekly") lab = `W${d.date.substring(5, 7)}${d.date.substring(8, 10)}`;
+      xlabels += `<text x="${xCenter(i).toFixed(1)}" y="${padT + plotH + 14}" text-anchor="middle" font-size="9" fill="#8a8a8a">${esc(lab)}</text>`;
+    }
+
+    return `<svg class="tks-trend-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" width="100%">${grid}${bars}${line}${xlabels}</svg>`;
+  }
+
+  /** 趋势图例：模型色块 + 费用折线说明 */
+  private buildTrendLegend(s: StatisticsSummary): string {
+    const modelTotals: Record<string, number> = {};
+    for (const d of s.dailyStats) {
+      for (const k of Object.keys(d.byModel)) {
+        modelTotals[k] = (modelTotals[k] || 0) + d.byModel[k];
+      }
+    }
+    const keys = Object.keys(modelTotals).sort((a, b) => modelTotals[b] - modelTotals[a]);
+    const items = keys
+      .map((k) => `<span class="tks-legend-item"><span class="tks-legend-swatch" style="background:${modelColor(k)}"></span>${esc(k)}</span>`)
+      .join("");
+    const costItem = `<span class="tks-legend-item"><span class="tks-legend-line"></span>当日费用（右轴）</span>`;
+    return `<div class="tks-trend-legend">${items}${costItem}</div>`;
   }
 
   private renderModelBar(m: ModelStat, max: number): string {
@@ -501,7 +600,7 @@ export class Dashboard {
       <div class="tks-model-bar">
         <div class="tks-model-name" title="${esc(m.model)}">${esc(m.model)}</div>
         <div class="tks-model-bar-track">
-          <div class="tks-model-bar-fill" style="width: ${widthPercent}%"></div>
+          <div class="tks-model-bar-fill" style="width: ${widthPercent}%; background: ${modelColor(m.model.toLowerCase().trim())}"></div>
         </div>
         <div class="tks-model-detail">
           ${m.tokens.toLocaleString()} tokens · ${m.count} 次${this.store.hasAnyPrice() ? ` · 💰 ${this.store.formatCost(m.cost)}` : ""}
