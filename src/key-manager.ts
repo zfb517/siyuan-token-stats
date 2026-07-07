@@ -80,12 +80,17 @@ export class KeyManager {
     });
   }
 
-  /** 计算重置周期的起始时间戳 */
-  getResetBoundary(cycle: QuotaResetCycle): number {
+  /** 计算重置周期的起始时间戳。customDays 仅在 cycle 为 "custom" 时生效（最近 N 个自然日，含今天） */
+  getResetBoundary(cycle: QuotaResetCycle, customDays = 30): number {
     if (cycle === "none") return 0;
     const now = new Date();
     if (cycle === "daily") {
       return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    }
+    if (cycle === "custom") {
+      const today0 = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+      const n = Math.max(1, Math.floor(customDays) || 30);
+      return today0 - (n - 1) * 86400000;
     }
     // monthly: 本月 1 日 00:00
     return new Date(now.getFullYear(), now.getMonth(), 1).getTime();
@@ -99,7 +104,7 @@ export class KeyManager {
     totalRequests: number;
   } {
     const settings = this.store.getSettings();
-    const boundary = this.getResetBoundary(settings.quotaResetCycle);
+    const boundary = this.getResetBoundary(settings.quotaResetCycle, settings.customResetDays);
     const key = this.store.getApiKey(apiKeyId);
     const records = this.store
       .getRecords()
@@ -233,7 +238,7 @@ export class KeyManager {
     totalOutputTokens: number;
     totalRequests: number;
   } {
-    const boundary = this.getResetBoundary(settings.globalQuotaResetCycle);
+    const boundary = this.getResetBoundary(settings.globalQuotaResetCycle, settings.customResetDays);
     const records = this.store.getRecords().filter((r) => r.timestamp >= boundary);
     return {
       totalTokens: records.reduce((sum, r) => sum + r.totalTokens, 0) + (settings.globalUsedTokensOffset ?? 0),
@@ -318,7 +323,7 @@ export class KeyManager {
 
   /** 全局在当前重置周期内的累计总费用 */
   getGlobalCostUsage(settings: PluginSettings): { totalCost: number; totalRequests: number } {
-    const boundary = this.getResetBoundary(settings.globalCostResetCycle);
+    const boundary = this.getResetBoundary(settings.globalCostResetCycle, settings.customResetDays);
     const records = this.store.getRecords().filter((r) => r.timestamp >= boundary);
     let totalCost = 0;
     for (const r of records) {

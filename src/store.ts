@@ -29,6 +29,7 @@ const DEFAULT_SETTINGS: PluginSettings = {
   globalCostAlertThreshold: 0,
   globalCostResetCycle: "monthly",
   globalUsedCostOffset: 0,
+  customResetDays: 30,
   trendDateRangeStart: "",
   trendDateRangeEnd: "",
   trendAggregation: "daily",

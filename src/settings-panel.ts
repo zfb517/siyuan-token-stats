@@ -74,6 +74,7 @@ export class SettingsPanel {
         const options: { value: QuotaResetCycle; label: string }[] = [
           { value: "monthly", label: "每月重置" },
           { value: "daily", label: "每日重置" },
+          { value: "custom", label: "自定义（天）" },
           { value: "none", label: "永不重置" },
         ];
         for (const opt of options) {
@@ -84,6 +85,22 @@ export class SettingsPanel {
           select.appendChild(el);
         }
         return select;
+      },
+    });
+
+    setting.addItem({
+      title: "自定义周期天数（天）",
+      description: "当任一重置周期选「自定义（天）」时生效，统计最近 N 个自然日的用量（含当天）。例如 14 = 每两周、90 = 每季",
+      createActionElement: () => {
+        const input = document.createElement("input");
+        input.type = "number";
+        input.className = "b3-text-field fn__size200";
+        input.id = "tks-customResetDays";
+        input.value = String(s.customResetDays || 30);
+        input.min = "1";
+        input.max = "365";
+        input.step = "1";
+        return input;
       },
     });
 
@@ -169,6 +186,7 @@ export class SettingsPanel {
         const options: { value: QuotaResetCycle; label: string }[] = [
           { value: "monthly", label: "每月重置" },
           { value: "daily", label: "每日重置" },
+          { value: "custom", label: "自定义（天）" },
           { value: "none", label: "永不重置" },
         ];
         for (const opt of options) {
@@ -260,6 +278,7 @@ export class SettingsPanel {
         const options: { value: QuotaResetCycle; label: string }[] = [
           { value: "monthly", label: "每月重置" },
           { value: "daily", label: "每日重置" },
+          { value: "custom", label: "自定义（天）" },
           { value: "none", label: "永不重置" },
         ];
         for (const opt of options) {
@@ -380,6 +399,7 @@ export class SettingsPanel {
       0,
       parseFloat((document.getElementById("tks-globalUsedCostOffset") as HTMLInputElement)?.value || "0") || 0
     );
+    const customResetDays = Math.max(1, getNum("customResetDays"));
 
     const shouldResetGlobalAlert =
       globalQuotaLimit !== this.store.getSettings().globalQuotaLimit ||
@@ -405,6 +425,7 @@ export class SettingsPanel {
       globalCostAlertThreshold: Math.max(0, Math.min(100, globalCostAlertThreshold)),
       globalCostResetCycle,
       globalUsedCostOffset,
+      customResetDays,
     });
 
     if (shouldResetGlobalAlert) {
@@ -458,6 +479,7 @@ export class SettingsPanel {
     setVal("globalCostLimit", s.globalCostLimit);
     setVal("globalCostAlertThreshold", s.globalCostAlertThreshold);
     setVal("globalUsedCostOffset", s.globalUsedCostOffset);
+    setVal("customResetDays", s.customResetDays);
     if (!(isEditing && active!.id === "tks-quotaResetCycle")) {
       const cyc = document.getElementById("tks-quotaResetCycle") as HTMLSelectElement | null;
       if (cyc) cyc.value = s.quotaResetCycle;

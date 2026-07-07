@@ -75,7 +75,7 @@ export interface TokenRecord {
 }
 
 /** 限额重置周期 */
-export type QuotaResetCycle = "none" | "daily" | "monthly";
+export type QuotaResetCycle = "none" | "daily" | "monthly" | "custom";
 
 /** 插件全局设置 */
 export interface PluginSettings {
@@ -113,6 +113,8 @@ export interface PluginSettings {
   globalCostResetCycle: QuotaResetCycle;
   /** 全局手工校准的已用费用偏移量（货币单位，用于导入第三方平台历史花费），>= 0 */
   globalUsedCostOffset: number;
+  /** 自定义重置周期天数：当任一周期设为「自定义」时生效，表示统计「最近 N 个自然日」的用量 */
+  customResetDays: number;
   /** Token 趋势图默认开始日期 (yyyy-MM-dd)，空表示自动 */
   trendDateRangeStart: string;
   /** Token 趋势图默认结束日期 (yyyy-MM-dd)，空表示自动 */
