@@ -44,6 +44,7 @@ export class Store {
       lastSavedAt: 0,
       settingsUpdatedAt: 0,
       keysUpdatedAt: 0,
+      deletedKeys: [],
       apiKeys: [],
       records: [],
       settings: { ...DEFAULT_SETTINGS },
@@ -113,6 +114,12 @@ export class Store {
       }
       const mergedKeys = Array.from(keyMap.values());
 
+      // 合并所有来源的已删除 Key 墓碑（并集）—— 防止删除的 Key 在同步后复活
+      const deletedSet = new Set<string>();
+      for (const src of allSources) {
+        for (const id of (src as any).deletedKeys || []) deletedSet.add(id);
+      }
+
       // Records：按 id 取并集，去重
       const recordMap = new Map<string, TokenRecord>();
       for (const src of allSources) {
@@ -150,17 +157,19 @@ export class Store {
       }
 
       // 兼容旧版本字段补全
-      const finalMigratedKeys = mergedKeys.map((k) => {
-        const migrated = { ...k };
-        if (migrated.id === "siyuan-built-in" && migrated.provider === "siyuan") {
-          migrated.provider = migrated.baseUrl ? migrated.baseUrl : "SiYuan AI";
-        }
-        if (migrated.usedTokensOffset === undefined) migrated.usedTokensOffset = 0;
-        if (migrated.usedInputTokensOffset === undefined) migrated.usedInputTokensOffset = 0;
-        if (migrated.usedOutputTokensOffset === undefined) migrated.usedOutputTokensOffset = 0;
-        if (!Array.isArray(migrated.models)) migrated.models = [];
-        return migrated;
-      });
+      const finalMigratedKeys = mergedKeys
+        .map((k) => {
+          const migrated = { ...k };
+          if (migrated.id === "siyuan-built-in" && migrated.provider === "siyuan") {
+            migrated.provider = migrated.baseUrl ? migrated.baseUrl : "SiYuan AI";
+          }
+          if (migrated.usedTokensOffset === undefined) migrated.usedTokensOffset = 0;
+          if (migrated.usedInputTokensOffset === undefined) migrated.usedInputTokensOffset = 0;
+          if (migrated.usedOutputTokensOffset === undefined) migrated.usedOutputTokensOffset = 0;
+          if (!Array.isArray(migrated.models)) migrated.models = [];
+          return migrated;
+        })
+        .filter((k) => !deletedSet.has(k.id));
 
       // 时间戳取各来源最大值
       const maxLastSavedAt = Math.max(0, ...allSources.map((s) => s.lastSavedAt || 0));
@@ -172,6 +181,7 @@ export class Store {
         lastSavedAt: maxLastSavedAt,
         settingsUpdatedAt: maxSettingsUpdatedAt,
         keysUpdatedAt: maxKeysUpdatedAt,
+        deletedKeys: Array.from(deletedSet),
         apiKeys: finalMigratedKeys,
         records: trimmedRecords,
         settings: migratedSettings,
@@ -403,7 +413,13 @@ export class Store {
       for (const k of olderKeys) keyMap.set(k.id, k);
       for (const k of newerKeys) keyMap.set(k.id, k);
 
-      const mergedKeys = Array.from(keyMap.values());
+      // 合并已删除 Key 墓碑（并集），并排除 —— 防止删除的 Key 在同步后复活
+      const remoteDeleted = (remote as any).deletedKeys || [];
+      const localDeleted = local.deletedKeys || [];
+      const mergedDeleted = Array.from(new Set([...localDeleted, ...remoteDeleted]));
+      const mergedKeys = Array.from(keyMap.values()).filter(
+        (k) => !mergedDeleted.includes(k.id)
+      );
 
       // ── 合并 Settings：按 settingsUpdatedAt 取较新方 ──
       const localSettingsNewer = localSettingsUpdatedAt >= remoteSettingsUpdatedAt;
@@ -420,6 +436,7 @@ export class Store {
         lastSavedAt: Math.max(localLastSavedAt, remoteLastSavedAt),
         settingsUpdatedAt: mergedSettingsUpdatedAt,
         keysUpdatedAt: mergedKeysUpdatedAt,
+        deletedKeys: mergedDeleted,
         apiKeys: mergedKeys,
         records: trimmedRecords,
         settings: mergedSettings,
@@ -447,6 +464,9 @@ export class Store {
   }
 
   addApiKey(key: ApiKeyConfig): void {
+    // 若添加的是之前被删除的 Key（同 id），从墓碑列表移除，允许恢复
+    if (!this.data.deletedKeys) this.data.deletedKeys = [];
+    this.data.deletedKeys = this.data.deletedKeys.filter((id) => id !== key.id);
     this.data.apiKeys.push(key);
     this.data.keysUpdatedAt = Date.now();
     this.scheduleSave();
@@ -463,6 +483,9 @@ export class Store {
 
   deleteApiKey(id: string): void {
     this.data.apiKeys = this.data.apiKeys.filter((k) => k.id !== id);
+    // 记入墓碑列表，云同步合并时仍会排除该 Key，避免其在其他设备上「复活」
+    if (!this.data.deletedKeys) this.data.deletedKeys = [];
+    if (!this.data.deletedKeys.includes(id)) this.data.deletedKeys.push(id);
     this.data.keysUpdatedAt = Date.now();
     this.scheduleSave();
   }
@@ -509,6 +532,7 @@ export class Store {
   clearAll(): void {
     this.data.records = [];
     this.data.apiKeys = [];
+    this.data.deletedKeys = [];
     this.scheduleSave();
   }
 

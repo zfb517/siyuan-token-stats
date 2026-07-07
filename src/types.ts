@@ -134,6 +134,11 @@ export interface PluginData {
    * 云同步合并时据此判断「哪端 Key 更新」。
    */
   keysUpdatedAt: number;
+  /**
+   * 已删除 Key 的墓碑列表（记录 id）。
+   * 云同步合并时用于排除已被删除的 Key，避免其在另一台设备上「复活」。
+   */
+  deletedKeys: string[];
   apiKeys: ApiKeyConfig[];
   records: TokenRecord[];
   settings: PluginSettings;

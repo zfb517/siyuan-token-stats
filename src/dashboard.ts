@@ -105,6 +105,20 @@ export class Dashboard {
     if (!this.dialog || !this.dialog.element) return;
     const body = this.dialog.element.querySelector(".b3-dialog__body");
     if (!body) return;
+
+    // 焦点保护：若用户正在仪表盘内编辑表单（如趋势日期框 / 聚合方式下拉框），
+    // 跳过本次整页重绘，避免打断输入或重置控件状态。下次刷新（3 秒后）自动恢复。
+    const active = document.activeElement as HTMLElement | null;
+    if (
+      active &&
+      body.contains(active) &&
+      (active.tagName === "INPUT" ||
+        active.tagName === "SELECT" ||
+        active.tagName === "TEXTAREA")
+    ) {
+      return;
+    }
+
     const scrollTop = body.scrollTop;
     this.summary = this.computeSummary();
     body.innerHTML = this.renderHTML(this.summary);
