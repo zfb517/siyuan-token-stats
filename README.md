@@ -1,6 +1,6 @@
 # SiYuan Token Statistics
 
-> 思源笔记 Token 用量统计插件 — 统计思源智能体及第三方插件的 Token 消耗，支持每个 API Key 单独设置限额、自定义提醒阈值、限额自动切断，以及 S3/WebDAV 云同步数据合并。
+> 思源笔记 Token 用量统计插件 — 统计思源笔记内所有 AI 调用的 Token 消耗（含通过思源智能体代理转发的第三方 API 调用，以及直接调用第三方 API 的请求），支持每个 API Key 单独设置限额、自定义提醒阈值、限额自动切断，以及 S3/WebDAV 云同步数据合并。
 
 ## 功能特性
 
@@ -164,7 +164,11 @@ src/
 
 插件通过 monkey-patch `window.fetch` 拦截思源笔记内所有 AI 调用，按以下流程统计：
 
-1. **请求识别**：判断目标是否为 AI 接口——思源智能体 `/api/ai/agent/chat`、第三方 OpenAI 兼容的 `/v1/chat/completions` 等；非 AI 请求直接放行
+1. **请求识别**：判断目标是否为 AI 接口——按 URL 模式匹配以下路径：
+   - **思源智能体**（`/api/ai/agent/chat`）：思源内置的 AI 对话接口，实际由思源将请求代理转发至用户配置的第三方 API 服务商（即思源智能体使用的是第三方 API Key，非思源自有 AI）
+   - **OpenAI 兼容**（`/v1/chat/completions`、`/v1/completions`）：第三方 OpenAI 格式 API
+   - **Anthropic**（`/v1/messages`）：第三方 Anthropic Claude API
+   - 非 AI 请求直接放行
 2. **请求前预检**：从请求体 `messages` 估算输入 token（`TokenCounter.estimateFromMessages`），若开启「超出限额时阻止请求」且预估将超限，则拦截本次请求（返回 HTTP 429，不真正发往服务商）
 3. **响应分析**：
    - **非流式 JSON 响应**：读取 `usage` 精确值；无 `usage` 时回退估算
