@@ -19,6 +19,8 @@ export interface PricePack {
   id: string;
   /** 资源包名称（仅展示用） */
   name: string;
+  /** 资源包总 Token 额度（0 = 不限，适用于按总量计费的资源包） */
+  totalTokens: number;
   /** 每 1K 输入 tokens 价格 */
   input: number;
   /** 每 1K 输出 tokens 价格 */
