@@ -562,9 +562,9 @@ export class Store {
     return this.data.settings.currency || "¥";
   }
 
-  /** 归一化模型名为单价表的查询键（小写、去空格） */
+  /** 归一化模型名为单价表的查询键（小写、去首尾空白、去掉所有空格/连字符/下划线） */
   private normalizeModelKey(model: string): string {
-    return (model || "").toLowerCase().trim();
+    return (model || "").toLowerCase().trim().replace(/[\s\-_]+/g, "");
   }
 
   /** 获取某模型的单价配置（未配置返回 null）。

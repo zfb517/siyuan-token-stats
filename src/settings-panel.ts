@@ -524,7 +524,8 @@ export class SettingsPanel {
     container.querySelector("#tks-price-save")?.addEventListener("click", () => {
       const finalPrices: Record<string, ModelPrice> = {};
       listEl.querySelectorAll(".tks-price-row").forEach((row) => {
-        const model = ((row.querySelector(".tks-price-model") as HTMLInputElement)?.value || "").trim().toLowerCase();
+        const model = ((row.querySelector(".tks-price-model") as HTMLInputElement)?.value || "")
+          .toLowerCase().trim().replace(/[\s\-_]+/g, "");
         const input = parseFloat((row.querySelector(".tks-price-input") as HTMLInputElement)?.value || "0") || 0;
         const output = parseFloat((row.querySelector(".tks-price-output") as HTMLInputElement)?.value || "0") || 0;
         if (model) finalPrices[model] = { input, output };
@@ -538,7 +539,7 @@ export class SettingsPanel {
         const output = parseFloat((row.querySelector(".tks-pack-output") as HTMLInputElement)?.value || "0") || 0;
         const models = ((row.querySelector(".tks-pack-models") as HTMLInputElement)?.value || "")
           .split(/[,，]/)
-          .map((x) => x.trim().toLowerCase())
+          .map((x) => x.toLowerCase().trim().replace(/[\s\-_]+/g, ""))
           .filter(Boolean);
         if (name || models.length > 0) {
           finalPacks.push({ id, name, totalTokens, input, output, models });
