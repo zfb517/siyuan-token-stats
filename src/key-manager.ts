@@ -313,4 +313,18 @@ export class KeyManager {
   resetGlobalAlert(): void {
     this.alertedGlobal = false;
   }
+
+  /**
+   * 检查所有密钥 + 全局的阈值与限额，并在需要提醒时调用 showNotification。
+   * 由定时器与云同步合并后调用，使阈值提醒在「用量经云同步到达本端」时也能触发，
+   * 而不仅依赖本端一次新的 API 调用（interceptor 中仅对当次命中的 key 检查）。
+   * 已提醒过的 key / 全局不会重复通知（alertedKeys / alertedGlobal 去重）。
+   */
+  checkAllThresholds(showNotification: (msg: string) => void): void {
+    const settings = this.store.getSettings();
+    for (const k of this.store.getApiKeys()) {
+      if (k.enabled) this.checkThreshold(k.id, showNotification);
+    }
+    this.checkGlobalThreshold(settings, showNotification);
+  }
 }

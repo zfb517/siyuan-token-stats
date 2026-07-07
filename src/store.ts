@@ -17,6 +17,7 @@ const DEFAULT_SETTINGS: PluginSettings = {
   quotaResetCycle: "monthly",
   abortStreamOnExceeded: true,
   showNotifications: true,
+  showTopBarBadge: true,
   maxRecords: 5000,
   globalQuotaLimit: 0,
   globalAlertThreshold: 0,

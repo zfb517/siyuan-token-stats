@@ -676,3 +676,41 @@
 .tks-card-muted .tks-card-value {
   color: var(--b3-theme-on-surface-light, #999);
 }
+
+/* ─── 顶栏实时用量徽标 ─── */
+.tks-topbar-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  font-size: 10px;
+  line-height: 16px;
+  font-weight: 600;
+  text-align: center;
+  color: #fff;
+  background: var(--b3-theme-on-surface-light, #999);
+  border: 1.5px solid var(--b3-toolbar-background, var(--b3-theme-background, #fff));
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+  z-index: 2;
+}
+
+.tks-topbar-badge.tks-badge-ok {
+  background: #2e9e5b;
+}
+
+.tks-topbar-badge.tks-badge-warn {
+  background: #d98b00;
+}
+
+.tks-topbar-badge.tks-badge-danger {
+  background: #d4453b;
+}
+
+.tks-topbar-badge.tks-badge-neutral {
+  background: var(--b3-theme-primary, #4a6fff);
+}

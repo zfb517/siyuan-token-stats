@@ -68,6 +68,8 @@ export interface PluginSettings {
   /** 流式响应中途超限时中断流 */
   abortStreamOnExceeded: boolean;
   showNotifications: boolean;
+  /** 顶栏显示实时用量徽标 */
+  showTopBarBadge: boolean;
   /** 最多保留多少条记录 */
   maxRecords: number;
   /** 全局总 Token 限额，0 = 不开启 */

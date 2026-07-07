@@ -38,6 +38,9 @@ export default class TokenStatsPlugin extends Plugin {
   private syncHandler: ((e: any) => void) | null = null;
   private mergeTimer: number | null = null;
   private merging = false;
+  private topBarItem: HTMLElement | null = null;
+  private badgeEl: HTMLElement | null = null;
+  private badgeTimer: number | null = null;
 
   async onload(): Promise<void> {
     console.log("[TokenStats] Plugin loading...");
@@ -72,8 +75,8 @@ export default class TokenStatsPlugin extends Plugin {
     // 5. 安装网络拦截器
     this.interceptor.install();
 
-    // 6. 顶栏按钮 → 打开仪表盘
-    this.addTopBar({
+    // 6. 顶栏按钮 → 打开仪表盘（并附加实时用量徽标）
+    this.topBarItem = this.addTopBar({
       icon: "iconTokenStats",
       title: "Token 用量统计",
       position: "right",
@@ -81,6 +84,7 @@ export default class TokenStatsPlugin extends Plugin {
         this.dashboard.show();
       },
     });
+    this.initTopBarBadge();
 
     // 7. 设置面板
     this.settingsPanel = new SettingsPanel(this.store, this.keyManager);
@@ -122,6 +126,12 @@ export default class TokenStatsPlugin extends Plugin {
       this.mergeTimer = null;
     }
 
+    // 停止顶栏徽标刷新定时器
+    if (this.badgeTimer !== null) {
+      clearInterval(this.badgeTimer);
+      this.badgeTimer = null;
+    }
+
     // 移除同步事件监听
     if (this.syncHandler) {
       this.eventBus.off("sync-end", this.syncHandler);
@@ -153,10 +163,73 @@ export default class TokenStatsPlugin extends Plugin {
     try {
       const changed = await this.store.mergeFromRemote();
       if (changed) this.settingsPanel.refreshFromStore();
+      // 合并后用量可能来自其它设备 → 实时刷新徽标并触发阈值提醒
+      this.updateBadge();
+      this.checkThresholdsLive();
     } catch (err) {
       console.warn("[TokenStats] Sync merge failed:", err);
     } finally {
       this.merging = false;
     }
+  }
+
+  /** 初始化顶栏实时用量徽标 */
+  private initTopBarBadge(): void {
+    if (!this.topBarItem) return;
+    const badge = document.createElement("span");
+    badge.className = "tks-topbar-badge";
+    badge.style.display = "none";
+    this.topBarItem.style.position = "relative";
+    this.topBarItem.appendChild(badge);
+    this.badgeEl = badge;
+    this.updateBadge();
+    // 实时刷新：每 3 秒更新徽标并做阈值检查（即使仪表盘未打开）
+    this.badgeTimer = window.setInterval(() => {
+      this.updateBadge();
+      this.checkThresholdsLive();
+    }, 3000);
+  }
+
+  /** 更新顶栏徽标显示 */
+  private updateBadge(): void {
+    const badge = this.badgeEl;
+    if (!badge) return;
+    const settings = this.store.getSettings();
+    if (!settings.showTopBarBadge) {
+      badge.style.display = "none";
+      return;
+    }
+    const usage = this.keyManager.getGlobalUsage(settings);
+    let text: string;
+    let level: "ok" | "warn" | "danger" | "neutral" = "neutral";
+    if (settings.globalQuotaLimit > 0) {
+      const pct = this.keyManager.getGlobalUsagePercent(settings);
+      text = `${Math.round(pct)}%`;
+      const warn = settings.globalAlertThreshold > 0 ? settings.globalAlertThreshold : 70;
+      const danger = 90;
+      if (pct >= danger || this.keyManager.isGlobalQuotaExceeded(settings)) level = "danger";
+      else if (pct >= warn) level = "warn";
+      else level = "ok";
+    } else {
+      text = this.formatCompactTokens(usage.totalTokens);
+      level = "neutral";
+    }
+    badge.textContent = text;
+    badge.className = `tks-topbar-badge tks-badge-${level}`;
+    badge.style.display = "inline-block";
+  }
+
+  /** 实时阈值检查：供定时器与云同步合并后调用，使同步到达的用量也能触发提醒 */
+  private checkThresholdsLive(): void {
+    const settings = this.store.getSettings();
+    if (!settings.showNotifications) return;
+    this.keyManager.checkAllThresholds((msg) => showMessage(msg, 5000, "error"));
+  }
+
+  /** 紧凑显示 token 数量（如 1.2k / 3.4M） */
+  private formatCompactTokens(n: number): string {
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+    return String(n);
   }
 }

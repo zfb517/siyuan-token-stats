@@ -100,6 +100,12 @@ export class SettingsPanel {
     });
 
     setting.addItem({
+      title: "顶栏显示实时用量徽标",
+      description: "在顶栏图标上显示当前全局用量（无全局限额时显示总 token 数，设有全局限额时显示百分比，颜色随阈值变化）",
+      createActionElement: () => this.createCheckbox("showTopBarBadge", s.showTopBarBadge),
+    });
+
+    setting.addItem({
       title: "启用调试日志",
       description: "在浏览器控制台输出请求/响应调试信息，排查 token 统计为 0 等问题（重启插件后生效）",
       createActionElement: () => this.createCheckbox("debugLogging", s.debugLogging ?? false),
@@ -303,6 +309,7 @@ export class SettingsPanel {
       quotaResetCycle,
       abortStreamOnExceeded: get("abortStreamOnExceeded"),
       showNotifications: get("showNotifications"),
+      showTopBarBadge: get("showTopBarBadge"),
       debugLogging: get("debugLogging"),
       maxRecords: isNaN(maxRecords) ? 5000 : Math.max(100, Math.min(50000, maxRecords)),
       globalQuotaLimit: Math.max(0, globalQuotaLimit),
@@ -343,6 +350,7 @@ export class SettingsPanel {
     setCheck("blockOnQuotaExceeded", s.blockOnQuotaExceeded);
     setCheck("abortStreamOnExceeded", s.abortStreamOnExceeded);
     setCheck("showNotifications", s.showNotifications);
+    setCheck("showTopBarBadge", s.showTopBarBadge);
     setCheck("debugLogging", s.debugLogging ?? false);
     setVal("max-records", s.maxRecords);
     setVal("globalQuotaLimit", s.globalQuotaLimit);
