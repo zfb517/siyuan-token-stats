@@ -697,6 +697,23 @@
   min-width: 0;
 }
 
+/* 资源包列表列标题 */
+.tks-pack-header {
+  display: grid;
+  grid-template-columns: 1.3fr 110px 80px 80px 1.5fr 36px;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 0;
+  font-size: 12px;
+  color: var(--b3-theme-on-surface-light, #888);
+  font-weight: 500;
+}
+.tks-pack-hd-total,
+.tks-pack-hd-input,
+.tks-pack-hd-output {
+  text-align: center;
+}
+
 /* 未配置单价时的汇总卡弱化显示 */
 .tks-card-muted .tks-card-value {
   color: var(--b3-theme-on-surface-light, #999);

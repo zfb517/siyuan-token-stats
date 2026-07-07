@@ -424,9 +424,9 @@ export class SettingsPanel {
     const makePackRow = (pack: PricePack): string => `
       <div class="tks-pack-row" data-pack-id="${esc(pack.id)}">
         <input type="text" class="b3-text-field tks-pack-name" value="${esc(pack.name)}" placeholder="资源包名（如 通义千问）" />
-        <input type="number" step="1" min="0" class="b3-text-field tks-pack-total" value="${esc(String(pack.totalTokens || 0))}" placeholder="总Tokens(0不限)" />
-        <input type="number" step="0.0001" min="0" class="b3-text-field tks-pack-input" value="${esc(String(pack.input))}" placeholder="输入/1K" />
-        <input type="number" step="0.0001" min="0" class="b3-text-field tks-pack-output" value="${esc(String(pack.output))}" placeholder="输出/1K" />
+        <input type="number" step="1" min="0" class="b3-text-field tks-pack-total" value="${esc(String(pack.totalTokens || 0))}" placeholder="总 Tokens（0 不限）" />
+        <input type="number" step="0.0001" min="0" class="b3-text-field tks-pack-input" value="${esc(String(pack.input))}" placeholder="输入单价/1K" />
+        <input type="number" step="0.0001" min="0" class="b3-text-field tks-pack-output" value="${esc(String(pack.output))}" placeholder="输出单价/1K" />
         <input type="text" class="b3-text-field tks-pack-models" value="${esc((pack.models || []).join(", "))}" placeholder="涵盖模型，逗号分隔" />
         <button class="b3-button b3-button--small b3-button--danger tks-pack-del" title="删除">✕</button>
       </div>
@@ -453,6 +453,14 @@ export class SettingsPanel {
         <button class="b3-button b3-button--text" id="tks-price-add">+ 添加模型</button>
       </div>
       <div class="tks-price-section-title">资源包（一个资源包可涵盖多个模型，包内模型共用同一单价；「总 Tokens」填该资源包的总额度，0 表示不限，用于按总量计费的资源包）</div>
+      <div class="tks-pack-header">
+        <span class="tks-pack-hd-name">名称</span>
+        <span class="tks-pack-hd-total">总 Tokens</span>
+        <span class="tks-pack-hd-input">输入/1K</span>
+        <span class="tks-pack-hd-output">输出/1K</span>
+        <span class="tks-pack-hd-models">涵盖模型</span>
+        <span></span>
+      </div>
       <div class="tks-pack-list" id="tks-pack-list">${initialPacks || '<div class="tks-price-empty">尚未配置任何资源包</div>'}</div>
       <div class="tks-price-toolbar">
         <button class="b3-button b3-button--text" id="tks-pack-add">+ 添加资源包</button>

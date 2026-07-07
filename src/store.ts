@@ -67,32 +67,34 @@ export class Store {
 
   async load(): Promise<void> {
     try {
-      // 同时读取三处来源：主存储 (E)、插件目录备份 (F)、localStorage
-      const eParsed = await this.readSource(STORAGE_PATH);
-      const fParsed = await this.readSource(PLUGIN_DIR_PATH);
-      let lsParsed: Partial<PluginData> | null = null;
+      // ── 第一步：优先读 localStorage（存活率最高，插件开关/卸载都不丢失）──
+      let primary: Partial<PluginData> | null = null;
       try {
         const ls = localStorage.getItem(LS_KEY);
         if (ls) {
           const fromLs = JSON.parse(ls) as Partial<PluginData>;
-          if (fromLs && fromLs.lastSavedAt) lsParsed = fromLs;
+          if (fromLs && fromLs.lastSavedAt) {
+            primary = fromLs;
+            console.log("[TokenStats] Found data in localStorage (primary).");
+          }
         }
-      } catch {
-        // localStorage 读取失败
-      }
+      } catch { /* ignore */ }
 
-      const sources = [eParsed, fParsed, lsParsed].filter(Boolean) as Partial<PluginData>[];
-      if (sources.length === 0) {
+      // ── 第二步：读文件来源（E 主存储 + F 插件目录备份）──
+      const eParsed = await this.readSource(STORAGE_PATH);
+      const fParsed = await this.readSource(PLUGIN_DIR_PATH);
+
+      // 收集所有非空来源（用于补充合并）
+      const fileSources = [eParsed, fParsed].filter(Boolean) as Partial<PluginData>[];
+      const allSources: Partial<PluginData>[] = primary ? [primary, ...fileSources] : fileSources;
+
+      if (allSources.length === 0) {
         console.log("[TokenStats] No existing data in any source, starting fresh.");
         return;
       }
 
-      // ── 关键修复：三处来源做「并集合并」，只要任一来源保留了 Key，就不会丢失 ──
-      // 旧逻辑是「E 优先、F/localStorage 仅作兜底」，一旦 E 被清空/覆盖（如集市开关插件
-      // 时云同步覆盖了 data/storage），而 F/localStorage 仍含 Key，旧逻辑会直接丢弃它们。
-      // 现在改为：所有来源中的 Key 按 id 取并集，冲突时取 keysUpdatedAt 较新的一方。
-
-      // 合并 API Keys：按 id 并集，冲突取 keysUpdatedAt 较新者（相等时优先保留有密钥串的）
+      // ── 合并策略：以 primary(localStorage) 为基础，文件来源做并集补充 ──
+      // API Keys：按 id 并集，冲突取 keysUpdatedAt 较新者（相等时优先保留有密钥串的）
       const keyMap = new Map<string, ApiKeyConfig>();
       const putKey = (k: ApiKeyConfig) => {
         const exist = keyMap.get(k.id);
@@ -106,14 +108,14 @@ export class Store {
           keyMap.set(k.id, k);
         }
       };
-      for (const src of sources) {
+      for (const src of allSources) {
         for (const k of src.apiKeys || []) putKey(k);
       }
       const mergedKeys = Array.from(keyMap.values());
 
-      // 合并 Records：按 id 取并集，去重
+      // Records：按 id 取并集，去重
       const recordMap = new Map<string, TokenRecord>();
-      for (const src of sources) {
+      for (const src of allSources) {
         for (const r of src.records || []) {
           if (!recordMap.has(r.id)) recordMap.set(r.id, r);
         }
@@ -122,9 +124,8 @@ export class Store {
         (a, b) => a.timestamp - b.timestamp
       );
       const maxRecords = (() => {
-        // 取各来源 settings.maxRecords 的最大值作为裁剪上限
         let m = 5000;
-        for (const src of sources) {
+        for (const src of allSources) {
           const v = (src.settings as any)?.maxRecords;
           if (typeof v === "number" && v > m) m = v;
         }
@@ -135,9 +136,9 @@ export class Store {
           ? mergedRecords.slice(-maxRecords)
           : mergedRecords;
 
-      // 合并 Settings：取 settingsUpdatedAt 最大者，再与默认值合并
-      let bestSettingsSrc: Partial<PluginData> = sources[0];
-      for (const src of sources) {
+      // Settings：取 settingsUpdatedAt 最大者，再与默认值合并
+      let bestSettingsSrc: Partial<PluginData> = allSources[0];
+      for (const src of allSources) {
         if ((src as any).settingsUpdatedAt > (bestSettingsSrc as any).settingsUpdatedAt) {
           bestSettingsSrc = src;
         }
@@ -149,7 +150,7 @@ export class Store {
       }
 
       // 兼容旧版本字段补全
-      const migratedKeys = mergedKeys.map((k) => {
+      const finalMigratedKeys = mergedKeys.map((k) => {
         const migrated = { ...k };
         if (migrated.id === "siyuan-built-in" && migrated.provider === "siyuan") {
           migrated.provider = migrated.baseUrl ? migrated.baseUrl : "SiYuan AI";
@@ -162,38 +163,55 @@ export class Store {
       });
 
       // 时间戳取各来源最大值
-      const maxLastSavedAt = Math.max(0, ...sources.map((s) => s.lastSavedAt || 0));
-      const maxSettingsUpdatedAt = Math.max(0, ...sources.map((s) => (s as any).settingsUpdatedAt || 0));
-      const maxKeysUpdatedAt = Math.max(0, ...sources.map((s) => (s as any).keysUpdatedAt || 0));
+      const maxLastSavedAt = Math.max(0, ...allSources.map((s) => s.lastSavedAt || 0));
+      const maxSettingsUpdatedAt = Math.max(0, ...allSources.map((s) => (s as any).settingsUpdatedAt || 0));
+      const maxKeysUpdatedAt = Math.max(0, ...allSources.map((s) => (s as any).keysUpdatedAt || 0));
 
       this.data = {
         version: DATA_VERSION,
         lastSavedAt: maxLastSavedAt,
         settingsUpdatedAt: maxSettingsUpdatedAt,
         keysUpdatedAt: maxKeysUpdatedAt,
-        apiKeys: migratedKeys,
+        apiKeys: finalMigratedKeys,
         records: trimmedRecords,
         settings: migratedSettings,
       };
 
       console.log(
-        `[TokenStats] Loaded (merged ${sources.length} source(s)): ${this.data.apiKeys.length} keys, ${this.data.records.length} records.`
+        `[TokenStats] Loaded (merged ${allSources.length} source(s), primary=${!!primary}): ${this.data.apiKeys.length} keys, ${this.data.records.length} records.`
       );
 
-      // 合并后若发现内存数据与任一磁盘来源不一致（例如集市开关插件后 E 被覆盖），
-      // 立即落盘，确保下次加载能直接命中最新数据。
+      // 加载后立即回写 localStorage 确保最新状态 + 异步落盘到文件
+      this.saveToLocalStorage();
       this.save().catch((e) => console.error("[TokenStats] Post-load save failed:", e));
     } catch (e) {
       console.warn("[TokenStats] Failed to load data, starting fresh:", e);
     }
   }
 
-  /** 防抖保存 */
+  /** 防抖保存（写文件），同时立即同步写 localStorage 确保不丢 */
   scheduleSave(delay = 500): void {
+    // ★ 每次变更都立即写 localStorage —— 这是存活率最高的持久化层，
+    //   插件卸载/集市开关/浏览器关闭都不会丢失。
+    this.saveToLocalStorage();
     if (this.saveTimer) clearTimeout(this.saveTimer);
     this.saveTimer = setTimeout(() => {
       this.save().catch((e) => console.error("[TokenStats] Save failed:", e));
     }, delay);
+  }
+
+  /**
+   * 同步、立即写入 localStorage。
+   * 这是最可靠的持久化方式——不依赖异步 fetch/XHR，不会被防抖跳过，
+   * 在 onunload / 插件被杀 / 浏览器关闭前都能执行完毕。
+   */
+  saveToLocalStorage(): void {
+    try {
+      this.data.lastSavedAt = Date.now();
+      localStorage.setItem(LS_KEY, JSON.stringify(this.data));
+    } catch {
+      // ignore
+    }
   }
 
   async save(): Promise<void> {
@@ -261,8 +279,11 @@ export class Store {
     }
   }
 
-  /** 同步保存：使用同步 XHR 在插件卸载前强制落盘，写 E + F + localStorage */
+  /** 同步保存：使用同步 XHR 在插件卸载前强制落盘，先 localStorage 再 E + F */
   saveSync(): void {
+    // ★ 最优先：同步 localStorage —— 不依赖网络，必定在插件被杀前完成
+    this.saveToLocalStorage();
+
     try {
       this.data.lastSavedAt = Date.now();
       const payload = JSON.stringify(this.data, null, 2);
@@ -291,14 +312,7 @@ export class Store {
         // F 写入失败
       }
 
-      // 写 localStorage
-      try {
-        localStorage.setItem(LS_KEY, payload);
-      } catch {
-        // ignore
-      }
-
-      console.log("[TokenStats] Synchronous save completed (E + F + localStorage).");
+      console.log("[TokenStats] Synchronous save completed (localStorage + E + F).");
     } catch (e) {
       console.error("[TokenStats] saveSync error:", e);
     }

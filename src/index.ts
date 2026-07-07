@@ -41,6 +41,7 @@ export default class TokenStatsPlugin extends Plugin {
   private topBarItem: HTMLElement | null = null;
   private badgeEl: HTMLElement | null = null;
   private badgeTimer: number | null = null;
+  private lsHeartbeatTimer: number | null = null;
 
   async onload(): Promise<void> {
     console.log("[TokenStats] Plugin loading...");
@@ -115,6 +116,12 @@ export default class TokenStatsPlugin extends Plugin {
     this.mergeTimer = window.setInterval(() => this.mergeFromRemote(), 60000);
 
     console.log("[TokenStats] Plugin loaded successfully.");
+
+    // 11. localStorage 定期心跳：每 10 秒同步写一次 localStorage，
+    //     确保即使异步保存被防抖/网络异常跳过，数据也不会丢失。
+    this.lsHeartbeatTimer = window.setInterval(() => {
+      this.store.saveToLocalStorage();
+    }, 10000);
   }
 
   onunload(): void {
@@ -132,6 +139,12 @@ export default class TokenStatsPlugin extends Plugin {
       this.badgeTimer = null;
     }
 
+    // 停止 localStorage 心跳
+    if (this.lsHeartbeatTimer !== null) {
+      clearInterval(this.lsHeartbeatTimer);
+      this.lsHeartbeatTimer = null;
+    }
+
     // 移除同步事件监听
     if (this.syncHandler) {
       this.eventBus.off("sync-end", this.syncHandler);
@@ -141,9 +154,13 @@ export default class TokenStatsPlugin extends Plugin {
     // 卸载拦截器
     this.interceptor?.uninstall();
 
-    // 保存数据：先异步保存（写 E + F + localStorage），再同步保存（确保卸载前强制落盘）
+    // 保存数据：按可靠性从高到低依次执行
+    //   1. saveToLocalStorage() —— 同步、不依赖网络，必定完成
+    //   2. saveSync() —— 同步 XHR 写文件（E + F）
+    //   3. save() —— 异步写文件（兜底）
+    this.store?.saveToLocalStorage();     // 最优先：同步 localStorage
+    this.store?.saveSync();              // 其次：同步 XHR 文件
     this.store?.save().catch((e) => console.error("[TokenStats] Save on unload failed:", e));
-    this.store?.saveSync();
 
     // 移除样式
     this.styleElement?.remove();
