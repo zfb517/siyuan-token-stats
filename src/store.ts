@@ -92,15 +92,23 @@ export class Store {
 
   async load(): Promise<void> {
     try {
-      // ── 第一步：优先读 localStorage（存活率最高，插件开关/卸载都不丢失）──
-      let primary: Partial<PluginData> | null = null;
+      // ── 第一步：读 localStorage（存活率高，但不可作为唯一依赖）──
+      // 接受标准与 readSource 一致：只要有任一本插件数据标记即接受，
+      // 不强求 lastSavedAt（兼容异常清零或旧版写入）。
+      let lsData: Partial<PluginData> | null = null;
       try {
         const ls = localStorage.getItem(LS_KEY);
         if (ls) {
           const fromLs = JSON.parse(ls) as Partial<PluginData>;
-          if (fromLs && fromLs.lastSavedAt) {
-            primary = fromLs;
-            console.log("[TokenStats] Found data in localStorage (primary).");
+          if (fromLs && typeof fromLs === "object") {
+            const hasKeys = Array.isArray((fromLs as any).apiKeys);
+            const hasRecords = Array.isArray((fromLs as any).records);
+            const hasSettings = !!(fromLs as any).settings;
+            const hasTs = !!(fromLs as any).lastSavedAt;
+            if (hasKeys || hasRecords || hasSettings || hasTs) {
+              lsData = fromLs;
+              console.log("[TokenStats] Found data in localStorage.");
+            }
           }
         }
       } catch { /* ignore */ }
@@ -112,7 +120,7 @@ export class Store {
 
       // 收集所有非空来源（用于补充合并）
       const fileSources = [eParsed, fParsed, legacyParsed].filter(Boolean) as Partial<PluginData>[];
-      const allSources: Partial<PluginData>[] = primary ? [primary, ...fileSources] : fileSources;
+      const allSources: Partial<PluginData>[] = lsData ? [lsData, ...fileSources] : fileSources;
 
       if (allSources.length === 0) {
         console.log("[TokenStats] No existing data in any source, starting fresh.");
@@ -217,7 +225,7 @@ export class Store {
       };
 
       console.log(
-        `[TokenStats] Loaded (merged ${allSources.length} source(s), primary=${!!primary}): ${this.data.apiKeys.length} keys, ${this.data.records.length} records.`
+        `[TokenStats] Loaded (merged ${allSources.length} source(s), localStorage=${!!lsData}, fileSources=${fileSources.length}): ${this.data.apiKeys.length} keys, ${this.data.records.length} records.`
       );
 
       // 加载后立即回写 localStorage 确保最新状态 + 异步落盘到文件
