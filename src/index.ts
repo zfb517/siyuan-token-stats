@@ -8,7 +8,7 @@
  * 3. 为每个 API Key 单独设置限额与提醒阈值
  * 4. 可视化仪表盘展示统计结果
  */
-import { Plugin, showMessage, getFrontend } from "siyuan";
+import { Plugin, showMessage, getFrontend, fetchSyncPost } from "siyuan";
 import cssText from "./style.css?raw";
 import { Store } from "./store";
 import { KeyManager } from "./key-manager";
@@ -89,7 +89,8 @@ export default class TokenStatsPlugin extends Plugin {
 
     // 7. 设置面板
     this.settingsPanel = new SettingsPanel(this.store, this.keyManager);
-    this.settingsPanel.onManualSync = () => this.manualSync();
+    this.settingsPanel.onManualSync = () => this.manualSyncFull();
+    this.dashboard.onManualSync = () => this.manualSyncFull();
     this.setting = this.settingsPanel.setting;
 
     // 8. 注册命令
@@ -200,9 +201,47 @@ export default class TokenStatsPlugin extends Plugin {
     }
   }
 
-  /** 手动触发一次跨端统计合并（设置面板「立即同步」按钮调用），不受开关限制 */
-  async manualSync(): Promise<boolean> {
-    return this.doMerge();
+  /**
+   * 手动「云同步 + 合并」完整流程（设置面板与仪表盘「立即同步」按钮共用入口），不受「跨端统计合并」开关限制。
+   * 1) 通过思源官方内核 API /api/sync/performSync 触发云同步（SDK 内部自动鉴权，支持 S3/WebDAV/SiYuan Cloud）；
+   * 2) 后台同步为异步执行，等待 5s 让数据写入磁盘（S3/WebDAV 较慢）；
+   * 3) doMerge() 合并其他端统计；
+   * 4) 以思源浮动消息反馈结果。
+   */
+  async manualSyncFull(): Promise<boolean> {
+    let cloudTriggered = false;
+    let cloudMsg = "";
+    try {
+      const result = await fetchSyncPost("/api/sync/performSync", {
+        app: "siyuan-token-stats",
+      });
+      if (result.code === 0) {
+        cloudTriggered = true;
+      } else {
+        cloudMsg = result.msg ? String(result.msg) : `code=${result.code}`;
+      }
+    } catch (e) {
+      cloudMsg = e instanceof Error ? e.message : String(e);
+    }
+    if (cloudTriggered) {
+      showMessage("已触发思源云同步，等待同步完成…", 2000, "info");
+      await new Promise((r) => setTimeout(r, 5000));
+    }
+    const changed = await this.doMerge();
+    if (changed) {
+      showMessage("已合并其他端统计", 2000, "info");
+    } else if (cloudTriggered) {
+      showMessage("已是最新，无新数据（请确认其他端已完成过云同步）", 3500, "info");
+    } else if (cloudMsg) {
+      showMessage(
+        `未能触发思源云同步：${cloudMsg}。请先在思源「设置 - 关于 - 云端」启用并登录云同步，再点此按钮。`,
+        6000,
+        "info"
+      );
+    } else {
+      showMessage("已是最新，无新数据（建议先在思源设置中开启云同步）", 3500, "info");
+    }
+    return changed;
   }
 
   /** 初始化顶栏实时用量徽标 */

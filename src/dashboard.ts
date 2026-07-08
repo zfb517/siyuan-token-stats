@@ -54,6 +54,7 @@ export class Dashboard {
   private dialog: Dialog | null = null;
   private summary: StatisticsSummary | null = null;
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
+  public onManualSync: (() => Promise<boolean>) | null = null;
 
   constructor(store: Store, keyManager: KeyManager) {
     this.store = store;
@@ -445,6 +446,7 @@ export class Dashboard {
         <!-- 操作按钮 -->
         <div class="tks-dashboard-actions">
           <button class="b3-button b3-button--outline" id="tks-refresh">🔄 刷新</button>
+          <button class="b3-button b3-button--outline" id="tks-sync" title="触发思源云同步并合并其他端的统计记录（与设置「立即同步」功能相同）。需先在思源「设置 - 关于 - 云端」配置并启用云同步；若未配置则只合并本地已有数据。">☁️ 立即同步</button>
           <button class="b3-button b3-button--outline" id="tks-export-json">📥 导出 JSON</button>
           <button class="b3-button b3-button--outline" id="tks-export-csv">📊 导出 CSV</button>
           <button class="b3-button b3-button--outline b3-button--danger" id="tks-clear-records">🗑️ 清除记录</button>
@@ -641,6 +643,28 @@ export class Dashboard {
 
     el.querySelector("#tks-refresh")?.addEventListener("click", () => {
       this.refreshContent();
+    });
+
+    // 立即同步：触发云同步 + 合并其他端统计（与设置「立即同步」同一入口）
+    el.querySelector("#tks-sync")?.addEventListener("click", async (e) => {
+      const btn = e.currentTarget as HTMLButtonElement;
+      if (btn.disabled) return;
+      const original = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "同步中…";
+      try {
+        if (!this.onManualSync) {
+          showMessage("同步功能未就绪", 2000, "error");
+          return;
+        }
+        await this.onManualSync();
+        this.refreshContent();
+      } catch {
+        showMessage("同步失败，请确认思源数据同步已开启", 3000, "error");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+      }
     });
 
     el.querySelector("#tks-export-json")?.addEventListener("click", () => {

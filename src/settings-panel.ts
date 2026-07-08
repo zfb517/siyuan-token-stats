@@ -2,7 +2,7 @@
  * 设置面板
  * 使用 SiYuan 的 Setting 类构建设置页，API Key 管理使用自定义 Dialog。
  */
-import { Setting, Dialog, showMessage, confirm, getFrontend, fetchSyncPost } from "siyuan";
+import { Setting, Dialog, showMessage, confirm, getFrontend } from "siyuan";
 import type { Store } from "./store";
 import type { KeyManager } from "./key-manager";
 import type { ApiKeyConfig, QuotaResetCycle, ModelPrice, PricePack } from "./types";
@@ -22,7 +22,7 @@ export class SettingsPanel {
   private store: Store;
   private keyManager: KeyManager;
   setting: Setting;
-  /** 手动同步回调（由插件入口注入，指向 manualSync） */
+  /** 手动同步回调（由插件入口注入，指向 manualSyncFull） */
   onManualSync: (() => Promise<boolean>) | null = null;
 
   constructor(store: Store, keyManager: KeyManager) {
@@ -403,7 +403,7 @@ export class SettingsPanel {
     return input;
   }
 
-  /** 「立即同步」按钮回调：先通过思源内核 API 触发云同步，再合并统计 */
+  /** 「立即同步」按钮回调：委托插件统一入口（云同步 + 合并 + 浮动反馈） */
   private async handleManualSync(): Promise<void> {
     const btn = document.activeElement as HTMLButtonElement | null;
     if (btn) {
@@ -415,43 +415,7 @@ export class SettingsPanel {
         showMessage("同步功能未就绪", 2000, "error");
         return;
       }
-      // 使用思源官方插件 API fetchSyncPost 调用 /api/sync/performSync。
-      // fetchSyncPost 由思源 SDK 提供，内部自动携带 Authorization 鉴权，
-      // 无需手动获取或拼接 token。该接口支持 S3 / WebDAV / SiYuan Cloud 等所有同步提供商。
-      // 同步操作在后台异步执行，接口返回 code=0 仅表示已成功触发。
-      let cloudTriggered = false;
-      let cloudMsg = "";
-      try {
-        const result = await fetchSyncPost("/api/sync/performSync", {
-          app: "siyuan-token-stats",
-        });
-        if (result.code === 0) {
-          cloudTriggered = true;
-        } else {
-          cloudMsg = result.msg ? String(result.msg) : `code=${result.code}`;
-        }
-      } catch (e) {
-        cloudMsg = e instanceof Error ? e.message : String(e);
-      }
-      if (cloudTriggered) {
-        // performSync 为异步后台执行，等待同步完成写入磁盘（S3/WebDAV 需要更长时间）
-        showMessage("已触发思源云同步，等待同步完成…", 2000, "info");
-        await new Promise((r) => setTimeout(r, 5000));
-      }
-      const changed = await this.onManualSync();
-      if (changed) {
-        showMessage("已合并其他端统计", 2000, "info");
-      } else if (cloudTriggered) {
-        showMessage("已是最新，无新数据（请确认其他端已完成过云同步）", 3500, "info");
-      } else if (cloudMsg) {
-        showMessage(
-          `未能触发思源云同步：${cloudMsg}。请先在思源「设置 - 关于 - 云端」启用并登录云同步，再点此按钮。`,
-          6000,
-          "info"
-        );
-      } else {
-        showMessage("已是最新，无新数据（建议先在思源设置中开启云同步）", 3500, "info");
-      }
+      await this.onManualSync();
     } catch {
       showMessage("同步失败，请确认思源数据同步已开启", 3000, "error");
     } finally {
