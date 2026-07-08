@@ -99,18 +99,65 @@ export class Store {
   }
 
   /**
-   * 通过 SiYuan 官方 Plugin.loadData API 读取数据文件。
-   * 该 API 落盘于 data/storage/<pluginName>/ 下，是开关插件后仍存在的权威来源。
-   * 文件不存在或解析失败时返回 null（loadData 在缺失时可能返回 {}，由调用方用标记位判断）。
+   * 将任意原始值归一化为 PluginData 对象。
+   * 兼容 loadData 返回字符串（某些 SiYuan 版本返回未解析的 JSON）、
+   * 空对象、以及已解析的对象。不含数据标记时返回 null。
+   */
+  private normalizeData(raw: any, source: string): Partial<PluginData> | null {
+    // 某些 SiYuan 版本的 loadData 返回 JSON 字符串而非对象
+    if (typeof raw === "string") {
+      try { raw = JSON.parse(raw); } catch { return null; }
+    }
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      console.log(`[TokenStats] ${source} returned non-object:`, typeof raw, raw);
+      return null;
+    }
+    // 空对象 {} 或不含本插件数据的对象一律拒绝，防止空数据污染合并流程
+    if (!this.hasDataMarkers(raw)) {
+      console.log(`[TokenStats] ${source} returned object without data markers:`, Object.keys(raw));
+      return null;
+    }
+    const markers = {
+      apiKeys: Array.isArray(raw.apiKeys) ? raw.apiKeys.length : "none",
+      records: Array.isArray(raw.records) ? raw.records.length : "none",
+      settings: !!raw.settings,
+      lastSavedAt: raw.lastSavedAt || 0,
+    };
+    console.log(`[TokenStats] ${source} read OK:`, markers);
+    return raw as Partial<PluginData>;
+  }
+
+  /**
+   * 通过 SiYuan 官方 Plugin.loadData API 读取数据文件（主路径），
+   * 失败或返回无效值时自动回落到裸 fetch 读取同一物理文件（备用路径）。
+   * 双路径确保：即使官方 API 在插件热替换/升级场景下行为异常，仍能读到磁盘上的数据。
    */
   private async readOfficial(name: string): Promise<Partial<PluginData> | null> {
+    // ── 路径 A：SiYuan 官方 loadData API ──
     try {
-      if (!this.plugin || typeof this.plugin.loadData !== "function") return null;
-      const data = await this.plugin.loadData(name);
-      if (!data || typeof data !== "object" || Array.isArray(data)) return null;
-      return data as Partial<PluginData>;
-    } catch {
-      // 文件不存在或读取失败
+      if (this.plugin && typeof this.plugin.loadData === "function") {
+        const raw = await this.plugin.loadData(name);
+        const normalized = this.normalizeData(raw, `loadData(${name})`);
+        if (normalized) return normalized;
+      }
+    } catch (e) {
+      console.warn("[TokenStats] readOfficial loadData failed:", e);
+    }
+
+    // ── 路径 B：裸 fetch 回落（直接读取 data/storage/ 下同一物理文件）──
+    try {
+      const path = `data/storage/siyuan-token-stats/${name}`;
+      const resp = await fetch(`/api/file/getFile?path=${encodeURIComponent(path)}`);
+      if (!resp.ok) {
+        console.log(`[TokenStats] readOfficial fetch fallback: HTTP ${resp.status} for ${path}`);
+        return null;
+      }
+      const text = await resp.text();
+      if (!text) return null;
+      const parsed = JSON.parse(text);
+      return this.normalizeData(parsed, `fetch(${name})`);
+    } catch (e) {
+      console.warn("[TokenStats] readOfficial fetch fallback failed:", e);
     }
     return null;
   }
@@ -169,7 +216,12 @@ export class Store {
       if (lsData) allSources.push(lsData);
 
       if (allSources.length === 0) {
-        console.log("[TokenStats] No existing data in any source, starting fresh.");
+        // 诊断日志：帮助排查替换文件升级等场景下数据丢失的根因
+        console.warn(
+          "[TokenStats] ⚠ No existing data in ANY source — starting fresh with empty defaults!",
+          `primary(${FILE_NAME})=${!!primaryParsed}, backup(${BACKUP_NAME})=${!!backupParsed},` +
+          `legacy(${LEGACY_PATH})=${!!legacyParsed}, localStorage=${!!lsData}`
+        );
         this.loaded = true;
         return;
       }
