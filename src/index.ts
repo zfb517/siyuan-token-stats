@@ -168,6 +168,13 @@ export default class TokenStatsPlugin extends Plugin {
     this.styleElement?.remove();
     this.styleElement = null;
 
+    // 移除顶栏按钮与徽标（防止重载后 DOM 残留导致重复）
+    if (this.topBarItem) {
+      this.topBarItem.remove();
+      this.topBarItem = null;
+    }
+    this.badgeEl = null;
+
     console.log("[TokenStats] Plugin unloaded.");
   }
 

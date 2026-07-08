@@ -245,6 +245,10 @@ CJK 标点      ≈ 0.5 token/字
 
 ## 更新日志
 
+### v1.4.25
+- 修复反复开关插件后顶栏徽标与菜单项重复累积（onunload 未清理 addTopBar 创建的 DOM 节点）
+- 修复 plugin.json readme 字段格式（裸字符串改为 i18n 对象，与 displayName/description 一致）
+
 ### v1.4.24
 - 补全 plugin.json 字段（disabledInPublish / readme / keywords），与官方插件清单字段对齐
 

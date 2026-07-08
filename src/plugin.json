@@ -2,7 +2,7 @@
   "name": "siyuan-token-stats",
   "author": "zfb517",
   "url": "https://github.com/zfb517/siyuan-token-stats",
-  "version": "1.4.24",
+  "version": "1.4.25",
   "minAppVersion": "3.0.0",
   "backends": ["windows", "linux", "darwin", "docker", "android", "ios", "harmony"],
   "frontends": ["desktop", "desktop-window", "browser-desktop", "mobile", "browser-mobile"],
@@ -17,6 +17,9 @@
   "icon": "icon.png",
   "license": "MIT",
   "disabledInPublish": false,
-  "readme": "README.md",
+  "readme": {
+    "default": "README.md",
+    "zh_CN": "README.md"
+  },
   "keywords": ["token", "Token 统计", "用量", "API Key", "限额", "费用", "stats", "quota"]
 }
