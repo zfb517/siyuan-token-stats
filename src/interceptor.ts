@@ -252,7 +252,7 @@ export class Interceptor {
         success = response.ok;
       } catch (err) {
         // 记录失败请求
-        self.recordCall(aiCall, 0, 0, startTime, false, aiCall.model);
+        self.recordCall(aiCall, 0, 0, startTime, false, aiCall.model, undefined, true);
         throw err;
       }
 
@@ -716,6 +716,8 @@ export class Interceptor {
     let outputTokens = 0;
     let cacheReadTokens: number | undefined;
     let model = aiCall.model;
+    // 是否为启发式估算：默认 true；当从 API 响应 usage 提取到精确 token 时置 false
+    let estimated = true;
 
     const contentType = (response.headers.get("content-type") || "").toLowerCase();
     const settings = this.store.getSettings();
@@ -741,7 +743,7 @@ export class Interceptor {
       this.logDebug("analyzeResponse: response body is null, using input estimate only");
       inputTokens = estimatedInput;
       outputTokens = 0;
-      this.recordCall(aiCall, inputTokens, outputTokens, startTime, success, model);
+      this.recordCall(aiCall, inputTokens, outputTokens, startTime, success, model, undefined, true);
       return;
     }
 
@@ -752,6 +754,7 @@ export class Interceptor {
         inputTokens = result.inputTokens;
         outputTokens = result.outputTokens;
         cacheReadTokens = result.cacheReadTokens;
+        estimated = result.estimated;
         if (result.model) model = result.model;
         if (result.aborted) {
           success = false;
@@ -786,12 +789,14 @@ export class Interceptor {
             data ? this.extractOutputText(data) : text
           );
         }
+        estimated = !usage;
       } else if (contentType.includes("application/x-ndjson") || contentType.includes("application/ndjson")) {
         // NDJSON 流式响应
         const result = await this.parseNDJSONStream(response, aiCall, settings, estimatedInput);
         inputTokens = result.inputTokens;
         outputTokens = result.outputTokens;
         cacheReadTokens = result.cacheReadTokens;
+        estimated = result.estimated;
         if (result.model) model = result.model;
         if (result.aborted) success = false;
       } else if (contentType.includes("text/plain") || contentType.includes("text/html") || contentType.includes("application/xml") || contentType.includes("text/xml")) {
@@ -840,7 +845,7 @@ export class Interceptor {
 
     // 记录本次调用（无论 token 是否为 0，都需记录以反映真实请求量）
     const totalTokens = inputTokens + outputTokens;
-    this.recordCall(aiCall, inputTokens, outputTokens, startTime, success, model, cacheReadTokens);
+    this.recordCall(aiCall, inputTokens, outputTokens, startTime, success, model, cacheReadTokens, estimated);
 
     // 检查阈值（全局 + 单 Key）— 仅在有实际 token 消耗时检查，避免 0-token 请求触发误报
     if (totalTokens > 0 && settings.showNotifications) {
@@ -865,9 +870,11 @@ export class Interceptor {
     cacheReadTokens?: number;
     model?: string;
     aborted: boolean;
+    /** 是否来自启发式估算（无 usage 时为 true） */
+    estimated: boolean;
   }> {
     const reader = response.body?.getReader();
-    if (!reader) return { inputTokens: 0, outputTokens: 0, aborted: false };
+    if (!reader) return { inputTokens: 0, outputTokens: 0, aborted: false, estimated: true };
 
     const decoder = new TextDecoder();
     let buffer = "";
@@ -998,6 +1005,7 @@ export class Interceptor {
         cacheReadTokens: state.usage.cacheReadTokens || undefined,
         model: state.model,
         aborted,
+        estimated: false,
       };
     }
 
@@ -1008,6 +1016,7 @@ export class Interceptor {
       outputTokens: estimatedOutput,
       model: state.model,
       aborted,
+      estimated: true,
     };
   }
 
@@ -1197,9 +1206,11 @@ export class Interceptor {
     cacheReadTokens?: number;
     model?: string;
     aborted: boolean;
+    /** 是否来自启发式估算（无 usage 时为 true） */
+    estimated: boolean;
   }> {
     const reader = response.body?.getReader();
-    if (!reader) return { inputTokens: 0, outputTokens: 0, aborted: false };
+    if (!reader) return { inputTokens: 0, outputTokens: 0, aborted: false, estimated: true };
 
     const decoder = new TextDecoder();
     let buffer = "";
@@ -1285,6 +1296,7 @@ export class Interceptor {
         cacheReadTokens: usage.cacheReadTokens || undefined,
         model,
         aborted,
+        estimated: false,
       };
     }
     return {
@@ -1292,6 +1304,7 @@ export class Interceptor {
       outputTokens: this.tokenCounter.estimateFromText(fullContent),
       model,
       aborted,
+      estimated: true,
     };
   }
 
@@ -1420,7 +1433,8 @@ export class Interceptor {
     startTime: number,
     success: boolean,
     model?: string,
-    cacheReadTokens?: number
+    cacheReadTokens?: number,
+    estimated: boolean = true
   ): void {
     const finalModel = this.resolveModelName(model || aiCall.model, aiCall);
     const record: TokenRecord = {
@@ -1436,6 +1450,7 @@ export class Interceptor {
       timestamp: startTime,
       requestTime: Date.now() - startTime,
       success,
+      estimated,
     };
     this.store.addRecord(record);
     this.logDebug(`Recorded: ${record.apiKeyName} | ${record.model} | in=${inputTokens} out=${outputTokens} cache=${cacheReadTokens ?? 0} total=${record.totalTokens} success=${success}`);

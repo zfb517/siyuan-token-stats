@@ -78,6 +78,8 @@ export interface TokenRecord {
   timestamp: number;
   requestTime: number;
   success: boolean;
+  /** 是否为启发式估算：true=无 usage 字段、token 由估算器得出；false=来自 API 响应 usage（精确）；undefined=旧版本记录（无法区分，统计时计入估算） */
+  estimated?: boolean;
   /** 费用快照（仅当关闭「单价变更后自动重算」时写入，用于冻结当时费用；开启自动重算时为 undefined 实时计算） */
   cost?: number;
 }
@@ -99,6 +101,8 @@ export interface PluginSettings {
   showNotifications: boolean;
   /** 顶栏显示实时用量徽标 */
   showTopBarBadge: boolean;
+  /** 仪表盘是否拆分展示「精确值 / 启发式估算」总量（默认 false） */
+  dashboardSplitExactEstimate?: boolean;
   /** 最多保留多少条记录 */
   maxRecords: number;
   /** 全局总 Token 限额，0 = 不开启 */
@@ -193,6 +197,10 @@ export interface StatisticsSummary {
   averageRequestTime: number;
   /** 估算总费用（货币单位，由各模型单价计算） */
   totalCost: number;
+  /** 精确值总量（来自 API usage 的记录 totalTokens 之和） */
+  exactTokens: number;
+  /** 启发式估算总量（无 usage 的记录 totalTokens 之和，含旧版本未区分记录） */
+  estimatedTokens: number;
   modelStats: Record<string, ModelStat>;
   dailyStats: DailyStat[];
   keyStats: KeyStat[];

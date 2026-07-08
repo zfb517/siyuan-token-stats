@@ -159,6 +159,8 @@ export class Dashboard {
       failedRequests: 0,
       averageRequestTime: 0,
       totalCost: 0,
+      exactTokens: 0,
+      estimatedTokens: 0,
       modelStats: {},
       dailyStats: [],
       keyStats: [],
@@ -172,6 +174,12 @@ export class Dashboard {
       summary.totalOutputTokens += r.outputTokens;
       summary.totalCost += this.store.getRecordCost(r);
       totalTime += r.requestTime;
+      // 精确值（来自 API usage）与启发式估算分别累计；旧版本记录无 estimated 字段，计入估算
+      if (r.estimated === false) {
+        summary.exactTokens += r.totalTokens;
+      } else {
+        summary.estimatedTokens += r.totalTokens;
+      }
 
       if (r.success) {
         summary.successRequests++;
@@ -326,6 +334,12 @@ export class Dashboard {
 
     return `
       <div class="tks-dashboard">
+        <div class="tks-dash-toolbar">
+          <label class="tks-split-toggle" title="开启后，「总 Tokens」卡片将拆分展示「精确值（来自 API 响应 usage）」与「启发式估算」各自的 Token 量，便于评估统计可信度">
+            <input type="checkbox" id="tks-split-exact" ${settings.dashboardSplitExactEstimate ? "checked" : ""} />
+            <span>区分精确/估算</span>
+          </label>
+        </div>
         <!-- 汇总卡片 -->
         <div class="tks-summary-cards">
           <div class="tks-card">
@@ -333,6 +347,7 @@ export class Dashboard {
             <div class="tks-card-body">
               <div class="tks-card-value">${s.totalTokens.toLocaleString()}</div>
               <div class="tks-card-label">总 Tokens</div>
+              ${settings.dashboardSplitExactEstimate ? `<div class="tks-card-sub">精确 ${s.exactTokens.toLocaleString()} · 估算 ${s.estimatedTokens.toLocaleString()}</div>` : ""}
             </div>
           </div>
           <div class="tks-card">
@@ -642,6 +657,14 @@ export class Dashboard {
     const el = this.dialog.element;
 
     el.querySelector("#tks-refresh")?.addEventListener("click", () => {
+      this.refreshContent();
+    });
+
+    // 区分精确/估算 开关：持久化到设置，刷新后即时反映
+    el.querySelector("#tks-split-exact")?.addEventListener("change", (e) => {
+      const checked = (e.currentTarget as HTMLInputElement).checked;
+      const settings = this.store.getSettings();
+      this.store.updateSettings({ ...settings, dashboardSplitExactEstimate: checked });
       this.refreshContent();
     });
 

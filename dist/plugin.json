@@ -2,7 +2,7 @@
   "name": "siyuan-token-stats",
   "author": "zfb517",
   "url": "https://github.com/zfb517/siyuan-token-stats",
-  "version": "1.4.18",
+  "version": "1.4.19",
   "minAppVersion": "3.0.0",
   "backends": ["windows", "linux", "darwin", "docker", "android", "ios", "harmony"],
   "frontends": ["desktop", "desktop-window", "browser-desktop", "mobile", "browser-mobile"],
