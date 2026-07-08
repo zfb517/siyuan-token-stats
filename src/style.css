@@ -177,14 +177,14 @@
   align-items: flex-start;
   gap: 8px;
   margin-bottom: 14px;
-  padding: 10px 14px;
+  padding: 12px 16px;
   border-radius: 4px;
-  background-color: #fef2e8;
-  border: 2px solid #d97706;
-  color: #92400e;
+  background-color: #fff7ed;
+  border: 2px solid #ea580c;
+  color: #7c2d12;
   font-size: 13px;
-  font-weight: 600;
-  line-height: 1.5;
+  font-weight: 700;
+  line-height: 1.6;
 }
 
 .tks-disclaimer-icon {
@@ -199,19 +199,19 @@
 .tks-disclaimer-close {
   flex: 0 0 auto;
   margin-left: 8px;
-  border: 1px solid #b45309;
+  border: 2px solid #c2410c;
   background: transparent;
-  color: #b45309;
+  color: #c2410c;
   cursor: pointer;
   font-size: 12px;
-  font-weight: 600;
-  padding: 2px 8px;
+  font-weight: 700;
+  padding: 3px 10px;
   border-radius: 4px;
   white-space: nowrap;
 }
 
 .tks-disclaimer-close:hover {
-  background-color: #d97706;
+  background-color: #ea580c;
   color: #fff;
 }
 

@@ -325,6 +325,13 @@ export class SettingsPanel {
       actionElement: this.createButton("管理 API Key", () => this.openKeyManager()),
     });
 
+    // ─── 区分精确/估算（原在仪表盘工具栏，移至此处保持仪表盘清爽） ───
+    setting.addItem({
+      title: "仪表盘区分精确/估算",
+      description: "开启后，仪表盘「总 Tokens」卡片将拆分展示「精确值（来自 API 响应 usage 字段）」与「启发式估算」各自的 Token 量，便于评估统计可信度。仅 v1.4.19 及以后新增的记录可区分；旧版本记录无此标记，统一计入估算。",
+      createActionElement: () => this.createCheckbox("dashboardSplitExactEstimate", s.dashboardSplitExactEstimate ?? false),
+    });
+
     // ─── 跨端统计合并 ───
     setting.addItem({
       title: "跨端统计合并",
@@ -341,7 +348,7 @@ export class SettingsPanel {
     // ─── 仪表盘免责提示 ───
     setting.addItem({
       title: "仪表盘免责提示",
-      description: "开启时，仪表盘顶部常驻显示「数据仅供参考、以 API 供应商账单为准」的免责提示；关闭前需阅读并确认免责声明。",
+      description: "本插件统计数据与各 API 供应商官方账单可能存在误差（原因包括：部分请求未被拦截、单价配置偏差、启发式估算精度限制、云同步合并延迟等），请以 API 供应商的统计及账单为准。开启时，仪表盘面板顶部会常驻显示橙色免责横幅；关闭后横幅不再显示。注意：仪表盘内的「本次不再提示」按钮仅隐藏当前会话（重启思源后自动恢复），而此处开关为永久关闭。",
       createActionElement: () => {
         const cb = this.createCheckbox("showDisclaimer", s.showDisclaimer ?? true);
         cb.addEventListener("change", () => {
@@ -519,6 +526,7 @@ export class SettingsPanel {
       customResetDays,
       syncStatistics: get("syncStatistics"),
       showDisclaimer: get("showDisclaimer"),
+      dashboardSplitExactEstimate: get("dashboardSplitExactEstimate"),
     });
 
     if (shouldResetGlobalAlert) {
@@ -565,6 +573,7 @@ export class SettingsPanel {
     setCheck("debugLogging", s.debugLogging ?? false);
     setCheck("syncStatistics", s.syncStatistics ?? true);
     setCheck("showDisclaimer", s.showDisclaimer ?? true);
+    setCheck("dashboardSplitExactEstimate", s.dashboardSplitExactEstimate ?? false);
     setVal("max-records", s.maxRecords);
     setVal("globalQuotaLimit", s.globalQuotaLimit);
     setVal("globalAlertThreshold", s.globalAlertThreshold);

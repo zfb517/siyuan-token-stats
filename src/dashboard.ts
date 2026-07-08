@@ -54,6 +54,8 @@ export class Dashboard {
   private dialog: Dialog | null = null;
   private summary: StatisticsSummary | null = null;
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
+  /** 会话级标记：用户本次打开仪表盘时点击了「不再提示」，不持久化，重启恢复 */
+  private disclaimerDismissed: boolean = false;
   public onManualSync: (() => Promise<boolean>) | null = null;
 
   constructor(store: Store, keyManager: KeyManager) {
@@ -334,19 +336,12 @@ export class Dashboard {
 
     return `
       <div class="tks-dashboard">
-        ${settings.showDisclaimer !== false ? `
+        ${settings.showDisclaimer !== false && !this.disclaimerDismissed ? `
         <div class="tks-disclaimer-banner" id="tks-disclaimer">
           <span class="tks-disclaimer-icon">⚠️</span>
-          <span class="tks-disclaimer-text">免责提示：本插件统计数据仅供参考，实际用量与费用请以各 API 供应商的官方账单为准。使用本插件即代表您认可统计结果可能存在误差。</span>
-          <button class="tks-disclaimer-close" id="tks-disclaimer-close" title="关闭后仪表盘将不再显示本免责提示（关闭前需阅读并确认免责声明）">不再提示</button>
+          <span class="tks-disclaimer-text">免责提示：本插件统计数据与 API 供应商官方账单可能存在误差，请以 API 供应商的统计及账单为准。使用本插件即代表您认可此误差。</span>
+          <button class="tks-disclaimer-close" id="tks-disclaimer-close" title="本次会话不再显示（重启思源后自动恢复）；如需永久关闭，请到设置面板操作">本次不再提示</button>
         </div>` : ""}
-        <div class="tks-dash-toolbar">
-          <label class="tks-split-toggle" title="开启后，「总 Tokens」卡片将拆分展示「精确值（来自 API 响应 usage）」与「启发式估算」各自的 Token 量，便于评估统计可信度">
-            <input type="checkbox" id="tks-split-exact" ${settings.dashboardSplitExactEstimate ? "checked" : ""} />
-            <span>区分精确/估算</span>
-          </label>
-          <span class="tks-split-hint">仅 v1.4.19+ 新增记录区分精确/估算；旧记录统一计入估算</span>
-        </div>
         <!-- 汇总卡片 -->
         <div class="tks-summary-cards">
           <div class="tks-card">
@@ -667,22 +662,15 @@ export class Dashboard {
       this.refreshContent();
     });
 
-    // 区分精确/估算 开关：持久化到设置，刷新后即时反映
-    el.querySelector("#tks-split-exact")?.addEventListener("change", (e) => {
-      const checked = (e.currentTarget as HTMLInputElement).checked;
-      const settings = this.store.getSettings();
-      this.store.updateSettings({ ...settings, dashboardSplitExactEstimate: checked });
-      this.refreshContent();
-    });
+    // 区分精确/估算 开关已移至设置面板（API 管理区），此处不再绑定
 
     el.querySelector("#tks-disclaimer-close")?.addEventListener("click", () => {
       confirm(
-        "关闭免责提示",
-        "关闭后仪表盘将不再显示本免责提示。\n\n本插件统计数据仅供参考，实际用量与费用请以各 API 供应商的官方账单为准。使用本插件即代表您认可统计结果可能存在误差。\n\n确认关闭吗？",
+        "隐藏免责提示",
+        "本插件统计数据与 API 供应商官方账单可能存在误差，请以 API 供应商的统计及账单为准。\n\n点击「确认」仅本次会话隐藏（重启思源后将自动恢复显示）。\n如需永久关闭此提示，请到「设置 - 仪表盘免责提示」中操作。",
         () => {
-          this.store.updateSettings({ showDisclaimer: false });
+          this.disclaimerDismissed = true;
           this.refreshContent();
-          showMessage("已关闭仪表盘免责提示", 2000, "info");
         }
       );
     });
