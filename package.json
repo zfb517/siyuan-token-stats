@@ -1,6 +1,6 @@
 {
   "name": "siyuan-token-stats",
-  "version": "1.4.22",
+  "version": "1.4.24",
   "description": "Token usage statistics for SiYuan AI and third-party plugins",
   "scripts": {
     "build": "vite build && node scripts/copy-static.mjs",

@@ -245,6 +245,9 @@ CJK 标点      ≈ 0.5 token/字
 
 ## 更新日志
 
+### v1.4.24
+- 补全 plugin.json 字段（disabledInPublish / readme / keywords），与官方插件清单字段对齐
+
 ### v1.4.23
 - **仪表盘整体留白根治**：根因为 `show()` 中 Dialog 被硬编码固定高度（`700px` / 移动端 `85vh`），且 `.tks-dashboard` 叠加了固定 `max-height` 滚动盒子，数据量少时弹窗内容撑不满固定高度、底部留出大片空白（所有内容少的场景通病，非趋势图专属）。修复：去掉 Dialog 固定高度改为随内容自适应（SiYuan 内置 `85vh` 仅在内容超高时启用滚动），并移除 `.tks-dashboard` 的固定高度盒子，滚动统一交给弹窗 body。
 - **趋势图高度优化**：SVG 标签残留的内联 `style="height:…px"` 优先级压过 CSS 的 `max-height`，导致此前多次调整 CSS 均无效；已彻底移除内联样式，改由 CSS `height/max-height: 120px !important` + `preserveAspectRatio="xMidYMin slice"`（顶部对齐、溢出裁切）控制，图表区域在窄数据下不再撑开。
@@ -454,4 +457,4 @@ CJK 标点      ≈ 0.5 token/字
 
 ## 开源协议
 
-本项目基于 [MIT License](./LICENSE) 开源。Copyright © 2026 zfb517。
+本项目基于 [MIT License](https://github.com/zfb517/siyuan-token-stats/blob/main/LICENSE) 开源。Copyright © 2026 zfb517。
