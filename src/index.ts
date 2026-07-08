@@ -57,7 +57,7 @@ export default class TokenStatsPlugin extends Plugin {
     this.addIcons(PLUGIN_ICON);
 
     // 3. 初始化各模块
-    this.store = new Store();
+    this.store = new Store(this);
     await this.store.load();
 
     this.tokenCounter = new TokenCounter();

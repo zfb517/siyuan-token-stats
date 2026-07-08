@@ -4,14 +4,19 @@
  */
 import type { PluginData, TokenRecord, ApiKeyConfig, PluginSettings, ModelPrice, PricePack } from "./types";
 
+// 主存储与自有备份：使用 SiYuan 官方 Plugin.loadData/saveData API 读写，
+// 实际落盘于 data/storage/siyuan-token-stats/ 下，随插件更新保留、随云同步，
+// 且在集市开关插件（插件上下文重建）后依然存在 —— 这是唯一可靠的持久化层。
+const FILE_NAME = "data.json";
+const BACKUP_NAME = "data.backup.json";
+// 旧的裸 fetch 完整路径写法：仅用于 saveSync() 在 onunload 时的同步兜底写入，
+// 以及旧版安装目录迁移源的只读读取。
 const STORAGE_PATH = "data/storage/siyuan-token-stats/data.json";
-const BAK_PATH = "data/storage/siyuan-token-stats/data.json.bak";
-// 自有备份：仍放在 data/storage 用户数据目录下（随插件更新保留、随云同步），
-// 不再写入插件安装目录 data/plugins/...，避免更新时被清空或与思源插件自身设置冲突。
 const BACKUP_PATH = "data/storage/siyuan-token-stats/data.backup.json";
 // 旧版曾把数据写入插件安装目录的 settings.json，作为只读迁移源尝试恢复；
 // 仅当文件中确含本插件数据（apiKeys/records）时才接受，避免误读思源自身的插件设置。
 const LEGACY_PATH = "data/plugins/siyuan-token-stats/settings.json";
+// localStorage 仅作为最后兜底镜像（上下文绑定、开关插件时可能被清空，不可作为权威来源）。
 const LS_KEY = "siyuan-token-stats-data";
 const DATA_VERSION = "1.3.0";
 
@@ -48,9 +53,12 @@ const DEFAULT_SETTINGS: PluginSettings = {
 
 export class Store {
   private data: PluginData;
+  private plugin: any;
+  private loaded = false;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor() {
+  constructor(plugin?: any) {
+    this.plugin = plugin;
     this.data = {
       version: DATA_VERSION,
       lastSavedAt: 0,
@@ -90,44 +98,83 @@ export class Store {
     return null;
   }
 
+  /**
+   * 通过 SiYuan 官方 Plugin.loadData API 读取数据文件。
+   * 该 API 落盘于 data/storage/<pluginName>/ 下，是开关插件后仍存在的权威来源。
+   * 文件不存在或解析失败时返回 null（loadData 在缺失时可能返回 {}，由调用方用标记位判断）。
+   */
+  private async readOfficial(name: string): Promise<Partial<PluginData> | null> {
+    try {
+      if (!this.plugin || typeof this.plugin.loadData !== "function") return null;
+      const data = await this.plugin.loadData(name);
+      if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+      return data as Partial<PluginData>;
+    } catch {
+      // 文件不存在或读取失败
+    }
+    return null;
+  }
+
+  /** 判断一个来源对象是否包含本插件数据标记 */
+  private hasDataMarkers(p: any): boolean {
+    if (!p || typeof p !== "object") return false;
+    return (
+      Array.isArray(p.apiKeys) ||
+      Array.isArray(p.records) ||
+      !!p.settings ||
+      !!p.lastSavedAt
+    );
+  }
+
+  /**
+   * 非破坏性守卫：当内存数据为「空」（无 Key、无记录）而磁盘上的主文件仍含有数据时，
+   * 禁止用空数据覆盖，防止集市开关插件竞态/异常时把用户数据清空。
+   * @param force 为 true 时（clear/reset 等用户显式清空操作）绕过守卫强制写入。
+   */
+  private async isDestructiveWrite(force: boolean): Promise<boolean> {
+    if (force) return false;
+    if (this.data.apiKeys.length > 0 || this.data.records.length > 0) return false;
+    const existing = await this.readOfficial(FILE_NAME).catch(() => null);
+    if (!existing) return false;
+    const ek = Array.isArray((existing as any).apiKeys) ? (existing as any).apiKeys.length : 0;
+    const er = Array.isArray((existing as any).records) ? (existing as any).records.length : 0;
+    return ek > 0 || er > 0;
+  }
+
   async load(): Promise<void> {
     try {
-      // ── 第一步：读 localStorage（存活率高，但不可作为唯一依赖）──
-      // 接受标准与 readSource 一致：只要有任一本插件数据标记即接受，
-      // 不强求 lastSavedAt（兼容异常清零或旧版写入）。
+      // ── 第一步：读文件来源（权威、随插件更新/云同步保留，开关插件后依然存在）──
+      //   优先使用 SiYuan 官方 loadData API：主存储 data.json + 自有备份 data.backup.json
+      const primaryParsed = await this.readOfficial(FILE_NAME);
+      const backupParsed = await this.readOfficial(BACKUP_NAME);
+      //   旧版安装目录迁移源（只读、严格校验）
+      const legacyParsed = await this.readSource(LEGACY_PATH, true);
+      const fileSources = [primaryParsed, backupParsed, legacyParsed].filter(Boolean) as Partial<PluginData>[];
+
+      // ── 第二步：读 localStorage 仅作为最后兜底镜像（上下文绑定，开关插件时可能被清空）──
       let lsData: Partial<PluginData> | null = null;
       try {
         const ls = localStorage.getItem(LS_KEY);
         if (ls) {
           const fromLs = JSON.parse(ls) as Partial<PluginData>;
-          if (fromLs && typeof fromLs === "object") {
-            const hasKeys = Array.isArray((fromLs as any).apiKeys);
-            const hasRecords = Array.isArray((fromLs as any).records);
-            const hasSettings = !!(fromLs as any).settings;
-            const hasTs = !!(fromLs as any).lastSavedAt;
-            if (hasKeys || hasRecords || hasSettings || hasTs) {
-              lsData = fromLs;
-              console.log("[TokenStats] Found data in localStorage.");
-            }
+          if (this.hasDataMarkers(fromLs)) {
+            lsData = fromLs;
+            console.log("[TokenStats] Found data in localStorage (fallback only).");
           }
         }
       } catch { /* ignore */ }
 
-      // ── 第二步：读文件来源（E 主存储 + F 自有备份 + 旧版安装目录迁移源）──
-      const eParsed = await this.readSource(STORAGE_PATH);
-      const fParsed = await this.readSource(BACKUP_PATH);
-      const legacyParsed = await this.readSource(LEGACY_PATH, true);
-
-      // 收集所有非空来源（用于补充合并）
-      const fileSources = [eParsed, fParsed, legacyParsed].filter(Boolean) as Partial<PluginData>[];
-      const allSources: Partial<PluginData>[] = lsData ? [lsData, ...fileSources] : fileSources;
+      // 收集所有非空来源（文件优先、localStorage 兜底）
+      const allSources: Partial<PluginData>[] = [...fileSources];
+      if (lsData) allSources.push(lsData);
 
       if (allSources.length === 0) {
         console.log("[TokenStats] No existing data in any source, starting fresh.");
+        this.loaded = true;
         return;
       }
 
-      // ── 合并策略：以 primary(localStorage) 为基础，文件来源做并集补充 ──
+      // ── 合并策略：各来源按 ID 并集，取较新版本；文件来源排在前面，时间戳并列时优先文件 ──
       // API Keys：按 id 并集，冲突取 keysUpdatedAt 较新者（相等时优先保留有密钥串的）
       const keyMap = new Map<string, ApiKeyConfig>();
       const putKey = (k: ApiKeyConfig) => {
@@ -225,34 +272,42 @@ export class Store {
       };
 
       console.log(
-        `[TokenStats] Loaded (merged ${allSources.length} source(s), localStorage=${!!lsData}, fileSources=${fileSources.length}): ${this.data.apiKeys.length} keys, ${this.data.records.length} records.`
+        `[TokenStats] Loaded (merged ${allSources.length} source(s), fileSources=${fileSources.length}, localStorage=${!!lsData}): ${this.data.apiKeys.length} keys, ${this.data.records.length} records.`
       );
 
-      // 加载后立即回写 localStorage 确保最新状态 + 异步落盘到文件
+      this.loaded = true;
+
+      // 加载后立即回写 localStorage 镜像（确保兜底可用）+ 异步落盘到文件（非破坏性）
       this.saveToLocalStorage();
       this.save().catch((e) => console.error("[TokenStats] Post-load save failed:", e));
     } catch (e) {
       console.warn("[TokenStats] Failed to load data, starting fresh:", e);
+      // 即使加载异常也允许后续保存（写入受非破坏性守卫保护，不会覆盖已有文件）
+      this.loaded = true;
     }
   }
 
-  /** 防抖保存（写文件），同时立即同步写 localStorage 确保不丢 */
-  scheduleSave(delay = 500): void {
-    // ★ 每次变更都立即写 localStorage —— 这是存活率最高的持久化层，
-    //   插件卸载/集市开关/浏览器关闭都不会丢失。
+  /** 防抖保存：写文件（官方 API）+ 立即写 localStorage 镜像。
+   *  未加载完成前不写入，避免用空数据覆盖已有文件。force 用于显式清空/重置。 */
+  scheduleSave(delay = 500, force = false): void {
+    if (!this.loaded) {
+      console.warn("[TokenStats] scheduleSave ignored: data not loaded yet.");
+      return;
+    }
+    // 每次变更都立即写 localStorage 镜像（兜底）
     this.saveToLocalStorage();
     if (this.saveTimer) clearTimeout(this.saveTimer);
     this.saveTimer = setTimeout(() => {
-      this.save().catch((e) => console.error("[TokenStats] Save failed:", e));
+      this.save(force).catch((e) => console.error("[TokenStats] Save failed:", e));
     }, delay);
   }
 
   /**
-   * 同步、立即写入 localStorage。
-   * 这是最可靠的持久化方式——不依赖异步 fetch/XHR，不会被防抖跳过，
-   * 在 onunload / 插件被杀 / 浏览器关闭前都能执行完毕。
+   * 同步、立即写入 localStorage 镜像（兜底层）。
+   * 未加载完成前不写入，避免用空数据污染镜像。
    */
   saveToLocalStorage(): void {
+    if (!this.loaded) return;
     try {
       this.data.lastSavedAt = Date.now();
       localStorage.setItem(LS_KEY, JSON.stringify(this.data));
@@ -261,56 +316,46 @@ export class Store {
     }
   }
 
-  async save(): Promise<void> {
-    try {
-      // 更新保存时间戳
-      this.data.lastSavedAt = Date.now();
+  /** 裸 fetch 兜底写入（仅当官方 API 不可用时） */
+  private async putFileRaw(path: string, data: any): Promise<void> {
+    const formData = new FormData();
+    formData.append("path", path);
+    formData.append("file", new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+    const resp = await fetch("/api/file/putFile", { method: "POST", body: formData });
+    if (!resp.ok) throw new Error(`putFile returned ${resp.status}`);
+  }
 
-      // 先备份旧文件
+  /** 异步保存（主存储 + 自有备份），经 SiYuan 官方 saveData API 落盘到 data/storage/<pluginName>/。
+   *  未加载完成前直接跳过；空数据且磁盘已有数据时非破坏性跳过（除非 force）。 */
+  async save(force = false): Promise<void> {
+    if (!this.loaded) {
+      console.warn("[TokenStats] save() ignored: data not loaded yet.");
+      return;
+    }
+    // 非破坏性守卫：防止把含数据的文件覆盖为空（开关插件竞态/异常）
+    if (await this.isDestructiveWrite(force)) {
+      console.warn("[TokenStats] save() skipped: in-memory data empty but existing file has data; not overwriting.");
+      return;
+    }
+    try {
+      this.data.lastSavedAt = Date.now();
+      // 主存储（官方 API 优先，裸 fetch 兜底）
+      if (this.plugin && typeof this.plugin.saveData === "function") {
+        await this.plugin.saveData(FILE_NAME, this.data);
+      } else {
+        await this.putFileRaw(STORAGE_PATH, this.data);
+      }
+      // 自有备份（同样位于 data/storage 用户数据目录）
       try {
-        const oldResp = await fetch(
-          `/api/file/getFile?path=${encodeURIComponent(STORAGE_PATH)}`
-        );
-        if (oldResp.ok) {
-          const oldText = await oldResp.text();
-          if (oldText) {
-            const bakForm = new FormData();
-            bakForm.append("path", BAK_PATH);
-            bakForm.append("file", new Blob([oldText], { type: "application/json" }));
-            await fetch("/api/file/putFile", { method: "POST", body: bakForm });
-          }
+        if (this.plugin && typeof this.plugin.saveData === "function") {
+          await this.plugin.saveData(BACKUP_NAME, this.data);
+        } else {
+          await this.putFileRaw(BACKUP_PATH, this.data);
         }
       } catch {
         // 备份失败不影响主流程
       }
-
-      // 写入新数据（主存储 E）
-      const formData = new FormData();
-      formData.append("path", STORAGE_PATH);
-      formData.append(
-        "file",
-        new Blob([JSON.stringify(this.data, null, 2)], { type: "application/json" })
-      );
-      const resp = await fetch("/api/file/putFile", { method: "POST", body: formData });
-      if (!resp.ok) {
-        throw new Error(`putFile returned ${resp.status}`);
-      }
-
-      // 同步写入自有备份 (F) —— 同样位于 data/storage 用户数据目录，
-      // 随插件更新保留、随云同步，且不会污染插件安装目录。
-      try {
-        const formDataF = new FormData();
-        formDataF.append("path", BACKUP_PATH);
-        formDataF.append(
-          "file",
-          new Blob([JSON.stringify(this.data, null, 2)], { type: "application/json" })
-        );
-        await fetch("/api/file/putFile", { method: "POST", body: formDataF });
-      } catch {
-        // F 写入失败不影响主流程
-      }
-
-      // 同步写入 localStorage（第三重备份）
+      // localStorage 镜像
       try {
         localStorage.setItem(LS_KEY, JSON.stringify(this.data));
       } catch {
@@ -318,7 +363,6 @@ export class Store {
       }
     } catch (e) {
       console.error("[TokenStats] Failed to save data:", e);
-      // 主存储写入失败时，尝试写 localStorage 兜底
       try {
         localStorage.setItem(LS_KEY, JSON.stringify(this.data));
       } catch {
@@ -327,16 +371,36 @@ export class Store {
     }
   }
 
-  /** 同步保存：使用同步 XHR 在插件卸载前强制落盘，先 localStorage 再 E + F */
+  /** 同步保存：在插件卸载前强制落盘（同步 XHR 兜底 + localStorage 镜像）。
+   *  未加载完成前直接跳过；仅在确有数据或曾成功保存过时写文件，避免清空已有文件。 */
   saveSync(): void {
-    // ★ 最优先：同步 localStorage —— 不依赖网络，必定在插件被杀前完成
-    this.saveToLocalStorage();
+    if (!this.loaded) {
+      console.warn("[TokenStats] saveSync() ignored: data not loaded yet.");
+      return;
+    }
+    // 在更新时间戳前判断：内存为空且从未成功保存过，则只写镜像、不写文件，保护已有数据文件
+    const hadContent =
+      this.data.apiKeys.length > 0 ||
+      this.data.records.length > 0 ||
+      this.data.lastSavedAt > 0;
 
     try {
       this.data.lastSavedAt = Date.now();
       const payload = JSON.stringify(this.data, null, 2);
 
-      // 写主存储 E
+      // localStorage 镜像（同步、必定完成）
+      try {
+        localStorage.setItem(LS_KEY, payload);
+      } catch {
+        // ignore
+      }
+
+      if (!hadContent) {
+        console.log("[TokenStats] saveSync skipped file write: in-memory empty and never saved (protecting existing file).");
+        return;
+      }
+
+      // 写主存储 E（同步 XHR）
       try {
         const xhrE = new XMLHttpRequest();
         xhrE.open("POST", "/api/file/putFile", false);
@@ -392,14 +456,25 @@ export class Store {
    */
   async mergeFromRemote(): Promise<boolean> {
     try {
-      const response = await fetch(
-        `/api/file/getFile?path=${encodeURIComponent(STORAGE_PATH)}`
-      );
-      if (!response.ok) return false;
-      const text = await response.text();
-      if (!text) return false;
-
-      const remote = JSON.parse(text) as Partial<PluginData>;
+      // 读取磁盘上的主文件（官方 API 优先，裸 fetch 兜底），与内存数据合并
+      let remote: Partial<PluginData> | null = null;
+      if (this.plugin && typeof this.plugin.loadData === "function") {
+        try {
+          const d = await this.plugin.loadData(FILE_NAME);
+          if (d && typeof d === "object" && !Array.isArray(d)) remote = d as Partial<PluginData>;
+        } catch {
+          // 官方 API 读取失败，回落到 fetch
+        }
+      }
+      if (!remote) {
+        const response = await fetch(
+          `/api/file/getFile?path=${encodeURIComponent(STORAGE_PATH)}`
+        );
+        if (!response.ok) return false;
+        const text = await response.text();
+        if (!text) return false;
+        remote = JSON.parse(text) as Partial<PluginData>;
+      }
       if (!remote) return false;
 
       const local = this.data;
@@ -573,14 +648,14 @@ export class Store {
 
   clearRecords(): void {
     this.data.records = [];
-    this.scheduleSave();
+    this.scheduleSave(0, true);
   }
 
   clearAll(): void {
     this.data.records = [];
     this.data.apiKeys = [];
     this.data.deletedKeys = [];
-    this.scheduleSave();
+    this.scheduleSave(0, true);
   }
 
   // ─── Settings ───
@@ -599,7 +674,7 @@ export class Store {
   resetSettings(): void {
     this.data.settings = { ...DEFAULT_SETTINGS };
     this.data.settingsUpdatedAt = Date.now();
-    this.scheduleSave();
+    this.scheduleSave(0, true);
   }
 
   // ─── 费用估算 ───
