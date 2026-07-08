@@ -675,7 +675,6 @@ export class SettingsPanel {
           <option value="$" ${currency === "$" ? "selected" : ""}>$ (美元)</option>
         </select>
       </div>
-      <div class="tks-price-hint">模型名不区分大小写，保存时自动归一化为小写。</div>
       <div class="tks-price-opt">
         <label class="tks-price-opt-label"><input type="checkbox" id="tks-price-recalc" ${recalc ? "checked" : ""} /> 单价变更后自动重算历史费用</label>
         <span class="tks-price-opt-hint">开启后仪表盘与记录费用随单价实时更新；关闭则每条记录的费用在生成时固定，不再随单价变化。</span>
@@ -687,7 +686,7 @@ export class SettingsPanel {
         <span class="tks-price-hd-output">输出/1K</span>
         <span></span>
       </div>
-      <div class="tks-price-section-title">按模型单价</div>
+      <div class="tks-price-section-title">按模型单价（模型名不区分大小写，保存时自动归一化为小写）</div>
       <div class="tks-price-list" id="tks-price-list">${initialRows || '<div class="tks-price-empty">尚未配置任何模型单价</div>'}</div>
       <div class="tks-price-toolbar">
         <button class="b3-button b3-button--text" id="tks-price-add">+ 添加模型</button>

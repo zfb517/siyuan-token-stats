@@ -228,6 +228,9 @@ CJK 标点      ≈ 0.5 token/字
 
 ## 更新日志
 
+### v1.4.9
+- **优化（费用估算配置布局）** 将「模型名不区分大小写」提示文字从表头上方独立行移入「按模型单价」章节标题内（括号说明），与资源包章节标题风格保持一致
+
 ### v1.4.8
 - **新增（缓存命中 token 单价）** 模型单价和资源包均新增「缓存命中/1K」价格字段，支持 DeepSeek / OpenAI 等供应商的 `cached_input_tokens`、`cache_read_input_tokens` 三段式计费（缓存命中 < 输入 < 输出）。未配置时费用按原逻辑计算（仅输入+输出），向后兼容旧数据
 - **新增（拦截器提取）** 从 API 响应的 `usage.cached_input_tokens`、`usage.cache_read_input_tokens`、`usage.prompt_tokens_details.cached_tokens` 等字段自动提取缓存命中 token 数量，记录到 `cacheReadTokens` 字段；流式（SSE/NDJSON）与非流式响应均已覆盖
