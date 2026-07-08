@@ -6,7 +6,12 @@ import type { PluginData, TokenRecord, ApiKeyConfig, PluginSettings, ModelPrice,
 
 const STORAGE_PATH = "data/storage/siyuan-token-stats/data.json";
 const BAK_PATH = "data/storage/siyuan-token-stats/data.json.bak";
-const PLUGIN_DIR_PATH = "data/plugins/siyuan-token-stats/settings.json";
+// 自有备份：仍放在 data/storage 用户数据目录下（随插件更新保留、随云同步），
+// 不再写入插件安装目录 data/plugins/...，避免更新时被清空或与思源插件自身设置冲突。
+const BACKUP_PATH = "data/storage/siyuan-token-stats/data.backup.json";
+// 旧版曾把数据写入插件安装目录的 settings.json，作为只读迁移源尝试恢复；
+// 仅当文件中确含本插件数据（apiKeys/records）时才接受，避免误读思源自身的插件设置。
+const LEGACY_PATH = "data/plugins/siyuan-token-stats/settings.json";
 const LS_KEY = "siyuan-token-stats-data";
 const DATA_VERSION = "1.3.0";
 
@@ -58,15 +63,27 @@ export class Store {
     };
   }
 
-  /** 读取单个文件来源（失败返回 null） */
-  private async readSource(path: string): Promise<Partial<PluginData> | null> {
+  /**
+   * 读取单个文件来源（失败返回 null）。
+   * 只要文件解析为对象且含有本插件数据标记（lastSavedAt / settings / apiKeys / records）即接受，
+   * 放宽对 lastSavedAt 的硬性要求，以兼容旧版本（未写入 lastSavedAt）的数据文件。
+   * @param strict 为 true 时（用于旧版安装目录迁移源）仅接受确含 apiKeys/records 的文件，
+   *               防止误读思源自身的插件设置文件。
+   */
+  private async readSource(path: string, strict = false): Promise<Partial<PluginData> | null> {
     try {
       const response = await fetch(`/api/file/getFile?path=${encodeURIComponent(path)}`);
       if (!response.ok) return null;
       const text = await response.text();
       if (!text) return null;
       const parsed = JSON.parse(text) as Partial<PluginData>;
-      if (parsed && parsed.lastSavedAt) return parsed;
+      if (!parsed || typeof parsed !== "object") return null;
+      const hasKeys = Array.isArray((parsed as any).apiKeys);
+      const hasRecords = Array.isArray((parsed as any).records);
+      const hasSettings = !!(parsed as any).settings;
+      const hasTs = !!(parsed as any).lastSavedAt;
+      if (strict && !hasKeys && !hasRecords) return null;
+      if (hasKeys || hasRecords || hasSettings || hasTs) return parsed;
     } catch {
       // 读取失败
     }
@@ -88,12 +105,13 @@ export class Store {
         }
       } catch { /* ignore */ }
 
-      // ── 第二步：读文件来源（E 主存储 + F 插件目录备份）──
+      // ── 第二步：读文件来源（E 主存储 + F 自有备份 + 旧版安装目录迁移源）──
       const eParsed = await this.readSource(STORAGE_PATH);
-      const fParsed = await this.readSource(PLUGIN_DIR_PATH);
+      const fParsed = await this.readSource(BACKUP_PATH);
+      const legacyParsed = await this.readSource(LEGACY_PATH, true);
 
       // 收集所有非空来源（用于补充合并）
-      const fileSources = [eParsed, fParsed].filter(Boolean) as Partial<PluginData>[];
+      const fileSources = [eParsed, fParsed, legacyParsed].filter(Boolean) as Partial<PluginData>[];
       const allSources: Partial<PluginData>[] = primary ? [primary, ...fileSources] : fileSources;
 
       if (allSources.length === 0) {
@@ -270,10 +288,11 @@ export class Store {
         throw new Error(`putFile returned ${resp.status}`);
       }
 
-      // 同步写入插件目录备份 (F) — 防止插件更新时主存储被清空
+      // 同步写入自有备份 (F) —— 同样位于 data/storage 用户数据目录，
+      // 随插件更新保留、随云同步，且不会污染插件安装目录。
       try {
         const formDataF = new FormData();
-        formDataF.append("path", PLUGIN_DIR_PATH);
+        formDataF.append("path", BACKUP_PATH);
         formDataF.append(
           "file",
           new Blob([JSON.stringify(this.data, null, 2)], { type: "application/json" })
@@ -321,12 +340,12 @@ export class Store {
         // E 写入失败，继续写 F
       }
 
-      // 写插件目录备份 F
+      // 写自有备份 F（data/storage 用户数据目录）
       try {
         const xhrF = new XMLHttpRequest();
         xhrF.open("POST", "/api/file/putFile", false);
         const formF = new FormData();
-        formF.append("path", PLUGIN_DIR_PATH);
+        formF.append("path", BACKUP_PATH);
         formF.append("file", new Blob([payload], { type: "application/json" }));
         xhrF.send(formF);
       } catch {

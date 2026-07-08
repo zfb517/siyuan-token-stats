@@ -92,18 +92,8 @@ export class SettingsPanel {
 
     setting.addItem({
       title: "自定义周期天数（天）",
-      description: "当任一重置周期选「自定义（天）」时生效，统计最近 N 个自然日的用量（含当天）。例如 14 = 每两周、90 = 每季",
-      createActionElement: () => {
-        const input = document.createElement("input");
-        input.type = "number";
-        input.className = "b3-text-field fn__size200";
-        input.id = "tks-customResetDays";
-        input.value = String(s.customResetDays || 30);
-        input.min = "1";
-        input.max = "365";
-        input.step = "1";
-        return input;
-      },
+      description: "单 Key 限额选「自定义（天）」时生效，统计最近 N 个自然日的用量（含当天）。例如 14 = 每两周、90 = 每季。下方全局周期也共用此天数。",
+      createActionElement: () => this.createCustomDaysInput("tks-customResetDays"),
     });
 
     setting.addItem({
@@ -203,6 +193,12 @@ export class SettingsPanel {
     });
 
     setting.addItem({
+      title: "全局周期自定义天数（天）",
+      description: "全局 Token 限额选「自定义（天）」时生效，统计最近 N 个自然日的用量（含当天）；与上方单 Key 周期共用同一天数",
+      createActionElement: () => this.createCustomDaysInput("tks-globalQuotaResetDays"),
+    });
+
+    setting.addItem({
       title: "全局已用 Token 校准",
       description: "手动输入从第三方平台导入的历史已用 Token，叠加到全局统计中（0 = 不校准）",
       createActionElement: () => {
@@ -295,6 +291,12 @@ export class SettingsPanel {
     });
 
     setting.addItem({
+      title: "全局费用周期自定义天数（天）",
+      description: "全局费用限额选「自定义（天）」时生效，统计最近 N 个自然日的用量（含当天）；与上方周期共用同一天数",
+      createActionElement: () => this.createCustomDaysInput("tks-globalCostResetDays"),
+    });
+
+    setting.addItem({
       title: "全局已用费用校准",
       description: "手动输入从第三方平台导入的历史已花费金额，叠加到全局费用统计中（0 = 不校准；单位与货币类型一致）",
       createActionElement: () => {
@@ -332,7 +334,7 @@ export class SettingsPanel {
 
     setting.addItem({
       title: "立即同步统计",
-      description: "手动从同步文件拉取一次其他端的统计记录（例如鸿蒙端打开后一键获取电脑端历史数据），不受上方开关限制。",
+      description: "手动触发一次思源云同步，并合并其他端的统计记录（例如鸿蒙端打开后一键获取电脑端历史数据），不受上方开关限制。需先在思源「设置 - 关于 - 云端」中配置并启用云同步。",
       actionElement: this.createButton("立即同步", () => this.handleManualSync()),
     });
 
@@ -376,7 +378,32 @@ export class SettingsPanel {
     return btn;
   }
 
-  /** 「立即同步」按钮回调：手动触发一次跨端统计合并，并给出结果反馈 */
+  /**
+   * 自定义周期天数输入：单 Key / 全局 Token / 全局费用 三个重置周期共用同一天数。
+   * 任一输入框改动会同步到另外两个，确保「选了自定义（天）」时一定有可填写的入口。
+   */
+  private createCustomDaysInput(id: string): HTMLInputElement {
+    const input = document.createElement("input");
+    input.type = "number";
+    input.className = "b3-text-field fn__size200";
+    input.id = id;
+    input.value = String(this.store.getSettings().customResetDays || 30);
+    input.min = "1";
+    input.max = "365";
+    input.step = "1";
+    const ids = ["tks-customResetDays", "tks-globalQuotaResetDays", "tks-globalCostResetDays"];
+    input.addEventListener("input", () => {
+      const v = input.value;
+      for (const other of ids) {
+        if (other === id) continue;
+        const el = document.getElementById(other) as HTMLInputElement | null;
+        if (el && el.value !== v) el.value = v;
+      }
+    });
+    return input;
+  }
+
+  /** 「立即同步」按钮回调：先触发思源云同步把其他端数据拉到本地磁盘，再合并，并给出结果反馈 */
   private async handleManualSync(): Promise<void> {
     const btn = document.activeElement as HTMLButtonElement | null;
     if (btn) {
@@ -388,8 +415,26 @@ export class SettingsPanel {
         showMessage("同步功能未就绪", 2000, "error");
         return;
       }
+      // 先触发思源云同步，把其他端数据拉取到本地磁盘（未配置云同步时静默跳过）
+      let cloudTriggered = false;
+      try {
+        const resp = await fetch("/api/sync/now", { method: "POST" });
+        cloudTriggered = resp.ok;
+      } catch {
+        cloudTriggered = false;
+      }
+      if (cloudTriggered) {
+        // 等待云同步完成写入磁盘
+        await new Promise((r) => setTimeout(r, 2500));
+      }
       const changed = await this.onManualSync();
-      showMessage(changed ? "已合并其他端统计" : "已是最新，无新数据", 2000, "info");
+      if (changed) {
+        showMessage("已合并其他端统计", 2000, "info");
+      } else if (cloudTriggered) {
+        showMessage("已是最新，无新数据（请确认其他端已开启云同步并完成过同步）", 3500, "info");
+      } else {
+        showMessage("已是最新，无新数据（建议先在思源设置中开启云同步）", 3500, "info");
+      }
     } catch {
       showMessage("同步失败，请确认思源数据同步已开启", 3000, "error");
     } finally {
@@ -521,6 +566,8 @@ export class SettingsPanel {
     setVal("globalCostAlertThreshold", s.globalCostAlertThreshold);
     setVal("globalUsedCostOffset", s.globalUsedCostOffset);
     setVal("customResetDays", s.customResetDays);
+    setVal("globalQuotaResetDays", s.customResetDays);
+    setVal("globalCostResetDays", s.customResetDays);
     if (!(isEditing && active!.id === "tks-quotaResetCycle")) {
       const cyc = document.getElementById("tks-quotaResetCycle") as HTMLSelectElement | null;
       if (cyc) cyc.value = s.quotaResetCycle;
@@ -654,7 +701,10 @@ export class SettingsPanel {
       <div class="tks-pack-list" id="tks-pack-list">${initialPacks || '<div class="tks-price-empty">尚未配置任何资源包</div>'}</div>
       <div class="tks-price-toolbar">
         <button class="b3-button b3-button--text" id="tks-pack-add">+ 添加资源包</button>
-        <button class="b3-button b3-button--text" id="tks-price-save">保存</button>
+        <span style="flex:1"></span>
+        <button class="b3-button b3-button--text" id="tks-price-export">📤 导出配置</button>
+        <button class="b3-button b3-button--text" id="tks-price-import">📥 导入配置</button>
+        <button class="b3-button b3-button--outline" id="tks-price-save">保存</button>
       </div>
     `;
 
@@ -736,6 +786,76 @@ export class SettingsPanel {
       dialog.destroy();
       showMessage("费用配置已保存", 2000, "info");
     });
+
+    container.querySelector("#tks-price-export")?.addEventListener("click", () => this.exportPriceConfig());
+    container.querySelector("#tks-price-import")?.addEventListener("click", () => this.importPriceConfig(dialog));
+  }
+
+  /** 导出费用估算配置（货币 / 单价变更重算开关 / 模型单价 / 资源包）为 JSON 文件 */
+  private exportPriceConfig(): void {
+    const s = this.store.getSettings();
+    const payload = JSON.stringify(
+      {
+        version: "1.3.0",
+        exportedAt: Date.now(),
+        currency: s.currency || "¥",
+        recalcCostOnPriceChange: s.recalcCostOnPriceChange !== false,
+        modelPrices: s.modelPrices || {},
+        pricePacks: s.pricePacks || [],
+      },
+      null,
+      2
+    );
+    const blob = new Blob([payload], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `siyuan-token-stats-prices-${new Date().toISOString().split("T")[0]}.json`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 0);
+    showMessage("费用配置已导出", 2000, "info");
+  }
+
+  /** 从 JSON 文件导入费用估算配置，载入到编辑器供确认后保存（不直接覆盖） */
+  private importPriceConfig(dialog: Dialog): void {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "application/json";
+    input.style.display = "none";
+    input.addEventListener("change", async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const parsed = JSON.parse(text);
+        const modelPrices =
+          parsed && parsed.modelPrices && typeof parsed.modelPrices === "object" ? parsed.modelPrices : {};
+        const pricePacks = Array.isArray(parsed?.pricePacks) ? parsed.pricePacks : [];
+        const currency = typeof parsed?.currency === "string" ? parsed.currency : this.store.getSettings().currency || "¥";
+        const recalc = typeof parsed?.recalcCostOnPriceChange === "boolean" ? parsed.recalcCostOnPriceChange : true;
+        const packs = pricePacks.map((p: any) => ({
+          ...p,
+          models: Array.isArray(p?.models) ? [...p.models] : [],
+        }));
+        // 重新渲染编辑器，载入导入配置；recalc 勾选框按导入值设置
+        this.renderPriceEditor(dialog, { ...modelPrices }, currency, packs);
+        setTimeout(() => {
+          const recEl = dialog.element.querySelector("#tks-price-recalc") as HTMLInputElement | null;
+          if (recEl) recEl.checked = recalc;
+        }, 10);
+        showMessage("已载入导入的费用配置，请检查后点击保存", 2000, "info");
+      } catch (err: any) {
+        console.error("[TokenStats] Import price config failed:", err);
+        showMessage("导入失败：" + (err?.message || "文件格式不正确"), 3000, "error");
+      }
+    });
+    document.body.appendChild(input);
+    input.click();
+    setTimeout(() => document.body.removeChild(input), 0);
   }
 
   // ─── API Key 管理对话框 ───
