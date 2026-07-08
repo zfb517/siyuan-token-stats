@@ -102,7 +102,7 @@ npm run build
 
 插件数据存储在 `data/storage/siyuan-token-stats/data.json`，位于思源工作空间内，随思源云同步自动在设备间传输。
 
-- **三重存储备份**：主存储（`data/storage/`）+ 插件目录备份（`data/plugins/siyuan-token-stats/settings.json`）+ localStorage，防止插件更新或异常时数据丢失
+- **文件为权威存储（开关插件安全）**：主存储 `data/storage/siyuan-token-stats/data.json` 经 SiYuan 官方 `Plugin.loadData`/`saveData` API 落盘，位于工作空间内、随插件更新与云同步保留；集市开关插件后该文件依然存在，是恢复数据的唯一可靠来源。自有备份 `data.backup.json` 同目录留存。localStorage 仅作为**最后兜底镜像**（上下文绑定，开关插件时可能被清空，不可作为权威来源）
 - **S3 / WebDAV 同步**：思源内核同步工作空间时会自动包含此文件；兼容华为云 S3、AWS S3、Cloudflare R2 等所有 S3 兼容存储，切换提供商无需修改插件配置
 - **多设备合并**：合并在以下时机自动触发——同步完成（`sync-end` 事件）、插件加载后延迟合并、以及之后每 60 秒的周期合并（确保移动端 / 鸿蒙 NEXT 即使错过 `sync-end` 也能收敛）：
   - 调用记录：按 ID 取并集，不丢失任何设备的记录
@@ -130,7 +130,7 @@ npm run build
 src/
 ├── index.ts            # 插件入口，生命周期管理，同步事件监听
 ├── types.ts            # TypeScript 类型定义
-├── store.ts            # 数据持久化（三重备份）+ 云同步合并
+├── store.ts            # 数据持久化（官方 API 权威存储 + 非破坏性守卫）+ 云同步合并
 ├── token-counter.ts    # Token 估算器（中英文启发式）
 ├── interceptor.ts      # Fetch 拦截器，识别 AI 调用并提取用量
 ├── key-manager.ts      # API Key CRUD、限额检查、阈值提醒
@@ -142,10 +142,10 @@ src/
 
 ## 数据存储
 
-- 统计数据存储在 `data/storage/siyuan-token-stats/data.json`
-- 插件目录备份：`data/plugins/siyuan-token-stats/settings.json`
-- 每次保存前自动备份为 `data.json.bak`
-- localStorage 第三重备份，防止异常丢失
+- **权威存储（推荐恢复来源）**：`data/storage/siyuan-token-stats/data.json`，由 SiYuan 官方 `loadData`/`saveData` API 读写，位于工作空间内、随插件更新与云同步保留，**集市开关插件后依然存在**
+- **自有备份**：`data/storage/siyuan-token-stats/data.backup.json`（与权威存储同目录，写入时机一致）
+- **localStorage 镜像**：仅作最后兜底；因上下文绑定，开关插件时可能被清空，不参与正常恢复优先级
+- **防丢机制**：① 加载完成前禁止任何写入（`loaded` 守卫）；② 内存为空而磁盘已有数据时禁止覆盖（非破坏性守卫），杜绝开关插件竞态把用户数据清空；③ 显式「清除全部 / 重置设置」走强制保存通道，正常清空可持久化
 - 数据文件随思源工作空间同步，支持 S3/WebDAV 云同步
 
 ## 注意事项
@@ -227,6 +227,28 @@ CJK 标点      ≈ 0.5 token/字
 > 因统计误差、部分请求未被拦截、单价配置错误、云同步合并偏差、或任何其它原因导致的统计 / 费用与实际账单的差异，本插件及开发者**不承担任何责任**。请勿将本插件数据用于精确计费、报销或合同等对准确性有严格要求的场景。
 
 ## 更新日志
+
+### v1.4.14
+- **代码审查修复（对照 v1.4.5 审查报告逐条核实后修复真实缺陷）**
+  - **S-1 超限通知去重**：限额用尽（⛔）提示此前无去重，每 3 秒定时检查重复弹窗。新增 `exceededAlertedKeys` / `exceededAlertedGlobal` / `exceededAlertedCostGlobal` 三套去重状态，跨周期自动重置；`clearAllAlerts` 补齐 `alertedCostGlobal` 清除
+  - **S-2 镜像时间戳误更新**：`saveToLocalStorage` 曾提前更新 `lastSavedAt`，干扰跨端合并的时效性判断。已移除，仅由真正落盘的 `save()` 更新该字段
+  - **S-3 递归刷新隐患**：清除记录 / 趋势区间切换时调用 `this.show()` 会重建对话框，改为调用 `refreshContent()` 原地刷新
+  - **M-2 URL 子串误匹配**：`findByUrl` / `findByUrlAndModel` 原用 `includes` 子串匹配，易导致不同端点误命中。改为基于路径前缀的 `pathMatches` 边界匹配
+  - **M-3 tool_calls 未估算**：`estimateFromMessages` 未统计 `msg.tool_calls[].function.arguments` / `name`，含工具调用的请求会少估 token。已补估算
+  - **M-4 revokeObjectURL 过早**：导出下载后立即回收对象 URL，部分浏览器下载失败。统一改为 `setTimeout(..., 1000)` 延迟回收，并补齐 `exportData` 缺失的锚点挂载
+  - **M-5 注释与算法不一致**：顶部 token 估算注释「中文约 1.5 字符≈1 token」与代码（1.0）不符，已校正
+  - **清理项**：移除 CJS 无用的 `output.globals`（W-1）、`vite.config.ts` 显式 `sourcemap: false`（W-2）、清除后残留的 badge tooltip（W-4）、删除 5 个无引用的 `.tks-daily-*` 死 CSS（W-5）、移除 `plugin.json` 无对应文件的 `i18n` 声明（G-2）
+  - **经核实未改（报告基于过期快照）**：M-1（SSE 当前按事件块解析符合规范）、W-3/W-6/T-1/T-2（对应文件 / 测试脚本在当前源码树中不存在）、W-7（实际安全）、G-1（13 文件唯一定义，tsc 零错误，非重复）
+
+### v1.4.13
+- **修复（跨端云同步合并无效）** 手机端(浏览器)有数据但 Win11 端全零，手动「立即同步」多次仍无效。根因：`mergeFromRemote()` 使用独立的内联读取代码，绕过了 v1.4.12 新增的 `normalizeData`/`hasDataMarkers`/双路径/诊断日志——等于读取路径有缺陷却没被修复覆盖。修复：`mergeFromRemote()` 改为调用 `readOfficial(FILE_NAME)` 复用已验证的可靠读取路径；增强"未变化"检测增加记录数+Key数比较（防止时间戳偶合导致跳过合法合并）；同步延迟从 1s/2.5s/3s 分别增加到 2.5s/4s/5s（适配 S3/WebDAV 云同步耗时）
+- **日志证据**：SiYuan 云同步日志确认 ① `data.json` 存在 sync merge conflict（手机数据 vs Win11 空数据）② `siyuan-token-stats` 不在插件重载列表中（完全依赖 sync-end 事件触发 mergeFromRemote）
+
+### v1.4.12
+- **修复（替换插件文件升级时数据丢失）** `readOfficial`（读取权威存储的入口）存在三个隐患：① 某些 SiYuan 版本的 `plugin.loadData` 返回 JSON **字符串**而非对象，被 `typeof !== "object"` 直接拒绝导致数据全丢；② 官方 API 返回空/异常时无备用读取通道；③ 所有错误被静默吞掉无日志。修复：新增 `normalizeData` 统一归一化层——自动检测字符串并 `JSON.parse`、用 `hasDataMarkers` 过滤空对象防止污染合并流程、每条路径输出详细诊断日志；`readOfficial` 增加裸 `fetch(/api/file/getFile)` 作为第二读取通道（官方 API 失败时自动回落到同一物理文件）；「无数据」分支升级为 ⚠ 级警告并打印每个来源的结果。**实测确认集市开关已修好（v1.4.11 双守卫生效），本版本加固的是文件替换升级场景**
+
+### v1.4.11
+- **修复（集市开关插件数据丢失，根治）** 重构持久化架构：将权威存储由 localStorage 改回 `data/storage/siyuan-token-stats/data.json` 文件，并经 SiYuan 官方 `Plugin.loadData`/`saveData` API 读写（开关插件后文件依然存在，是可靠来源）；localStorage 降为最后兜底镜像。新增两道防线：① `loaded` 守卫——加载完成前禁止任何写入，杜绝开关插件竞态用空数据覆盖已有文件；② 非破坏性守卫——内存为空而磁盘已有数据时跳过写入，防止清空用户数据。「清除全部 / 重置设置」走强制保存通道，正常清空仍可持久化。此前的 v1.3.20 曾把 localStorage 提升为主存储，本次彻底纠正
 
 ### v1.4.10
 - **修复（布局顺序）** 「按模型单价」章节标题移到列表表头**之前**（与资源包一致：标题 → 表头 → 列表），v1.4.9 仅将提示文字合并到标题但未调换与表头的先后顺序

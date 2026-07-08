@@ -3,8 +3,8 @@
  * 当 API 响应不包含 usage 字段时，用启发式算法粗略估算 token 数量。
  *
  * 估算规则（基于 GPT tokenizer 的经验值）：
- * - 英文：约 4 个字符 ≈ 1 token
- * - 中文：约 1.5 个字符 ≈ 1 token（汉字在 GPT tokenizer 中通常占 1-2 token）
+ * - 英文：约 4 个字符 ≈ 1 token（即每词约 1.3 token）
+ * - 中文：约 1 个字符 ≈ 1 token（启发式估算，实际 GPT tokenizer 多为 1-2 token/字）
  * - 代码/符号：约 3 个字符 ≈ 1 token
  */
 export class TokenCounter {
@@ -56,6 +56,16 @@ export class TokenCounter {
           }
           total += 4;
         }
+      }
+      // tool_calls：函数名 + 参数（JSON 字符串）的 token 估算，漏算会导致含工具调用的请求少估
+      if (Array.isArray(msg.tool_calls)) {
+        for (const tc of msg.tool_calls) {
+          if (tc?.function?.name) total += this.estimate(tc.function.name) + 1;
+          if (typeof tc?.function?.arguments === "string") {
+            total += this.estimate(tc.function.arguments);
+          }
+        }
+        total += 4; // tool 消息固定开销
       }
       if (msg?.role) total += 1; // role 字段约 1 token
     }

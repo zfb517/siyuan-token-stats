@@ -16,6 +16,14 @@ function normalizeUrlPath(url: string): string {
   }
 }
 
+/** 判断请求路径是否落在基准端点之下（含基准本身），避免子串误匹配 */
+function pathMatches(requestPath: string, basePath: string): boolean {
+  if (!basePath) return false;
+  if (requestPath === basePath) return true;
+  // 仅允许请求路径以基准路径为前缀，且其后紧跟路径分隔符或查询串
+  return requestPath.startsWith(basePath) && (requestPath[basePath.length] === "/" || requestPath[basePath.length] === "?");
+}
+
 export class KeyManager {
   constructor(private store: Store) {}
 
@@ -42,7 +50,7 @@ export class KeyManager {
         if (!k.enabled || !k.baseUrl) return false;
         const normalizedBase = normalizeUrlPath(k.baseUrl);
         if (!normalizedBase) return false;
-        return normalizedUrl.includes(normalizedBase) || normalizedBase.includes(normalizedUrl);
+        return pathMatches(normalizedUrl, normalizedBase);
       });
   }
 
@@ -54,7 +62,7 @@ export class KeyManager {
       const normalizedBase = normalizeUrlPath(k.baseUrl);
       const normalizedUrl = normalizeUrlPath(url);
       return normalizedBase && normalizedUrl
-        ? normalizedUrl.includes(normalizedBase) || normalizedBase.includes(normalizedUrl)
+        ? pathMatches(normalizedUrl, normalizedBase)
         : false;
     });
     if (candidates.length === 0) return undefined;
@@ -167,6 +175,7 @@ export class KeyManager {
    * 使用闭包变量避免重复提醒
    */
   private alertedKeys = new Set<string>();
+  private exceededAlertedKeys = new Set<string>();
 
   checkThreshold(
     apiKeyId: string,
@@ -189,22 +198,33 @@ export class KeyManager {
       showNotification(msg);
     }
 
-    // 超出限额（在阈值提醒之后显示）
+    // 超出限额（在阈值提醒之后显示，去重避免定时检查重复弹窗）
     if (this.isQuotaExceeded(apiKeyId)) {
-      const msg = `⛔ Token 限额已用尽：${key.name}（限额 ${key.quotaLimit.toLocaleString()} tokens）`;
-      showNotification(msg);
+      if (!this.exceededAlertedKeys.has(apiKeyId)) {
+        this.exceededAlertedKeys.add(apiKeyId);
+        const msg = `⛔ Token 限额已用尽：${key.name}（限额 ${key.quotaLimit.toLocaleString()} tokens）`;
+        showNotification(msg);
+      }
+    } else {
+      // 跨周期重置后（未超限）允许再次提醒
+      this.exceededAlertedKeys.delete(apiKeyId);
     }
   }
 
   /** 重置提醒状态（用户修改阈值后调用） */
   resetAlert(apiKeyId: string): void {
     this.alertedKeys.delete(apiKeyId);
+    this.exceededAlertedKeys.delete(apiKeyId);
   }
 
   /** 清除所有提醒状态（重置全部数据时调用） */
   clearAllAlerts(): void {
     this.alertedKeys.clear();
     this.alertedGlobal = false;
+    this.alertedCostGlobal = false;
+    this.exceededAlertedKeys.clear();
+    this.exceededAlertedGlobal = false;
+    this.exceededAlertedCostGlobal = false;
   }
 
   /** 生成新 key 的 ID */
@@ -285,6 +305,7 @@ export class KeyManager {
   }
 
   private alertedGlobal = false;
+  private exceededAlertedGlobal = false;
 
   /** 检查全局阈值并返回提醒信息 */
   checkGlobalThreshold(
@@ -307,16 +328,22 @@ export class KeyManager {
       showNotification(msg);
     }
 
-    // 全局超出限额
+    // 全局超出限额（去重）
     if (this.isGlobalQuotaExceeded(settings)) {
-      const msg = `⛔ 全局 Token 限额已用尽（限额 ${settings.globalQuotaLimit.toLocaleString()} tokens）`;
-      showNotification(msg);
+      if (!this.exceededAlertedGlobal) {
+        this.exceededAlertedGlobal = true;
+        const msg = `⛔ 全局 Token 限额已用尽（限额 ${settings.globalQuotaLimit.toLocaleString()} tokens）`;
+        showNotification(msg);
+      }
+    } else {
+      this.exceededAlertedGlobal = false;
     }
   }
 
   /** 重置全局提醒状态（修改阈值后调用） */
   resetGlobalAlert(): void {
     this.alertedGlobal = false;
+    this.exceededAlertedGlobal = false;
   }
 
   // ─── 全局费用限额 ───
@@ -371,6 +398,7 @@ export class KeyManager {
   }
 
   private alertedCostGlobal = false;
+  private exceededAlertedCostGlobal = false;
 
   /** 检查全局费用阈值并返回提醒信息 */
   checkGlobalCostThreshold(
@@ -394,17 +422,23 @@ export class KeyManager {
       showNotification(msg);
     }
 
-    // 全局超出费用限额
+    // 全局超出费用限额（去重）
     if (this.isGlobalCostExceeded(settings)) {
-      const cur = settings.currency || "¥";
-      const msg = `⛔ 全局费用限额已用尽（限额 ${cur}${settings.globalCostLimit.toFixed(2)}）`;
-      showNotification(msg);
+      if (!this.exceededAlertedCostGlobal) {
+        this.exceededAlertedCostGlobal = true;
+        const cur = settings.currency || "¥";
+        const msg = `⛔ 全局费用限额已用尽（限额 ${cur}${settings.globalCostLimit.toFixed(2)}）`;
+        showNotification(msg);
+      }
+    } else {
+      this.exceededAlertedCostGlobal = false;
     }
   }
 
   /** 重置全局费用提醒状态 */
   resetGlobalCostAlert(): void {
     this.alertedCostGlobal = false;
+    this.exceededAlertedCostGlobal = false;
   }
 
   /**

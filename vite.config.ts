@@ -14,9 +14,9 @@ export default defineConfig({
       external: ["siyuan"],
       output: {
         exports: "default",
-        globals: { siyuan: "siyuan" },
       },
     },
+    sourcemap: false,
     minify: "esbuild",
   },
 });

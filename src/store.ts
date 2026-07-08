@@ -361,7 +361,6 @@ export class Store {
   saveToLocalStorage(): void {
     if (!this.loaded) return;
     try {
-      this.data.lastSavedAt = Date.now();
       localStorage.setItem(LS_KEY, JSON.stringify(this.data));
     } catch {
       // ignore

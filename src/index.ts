@@ -231,6 +231,8 @@ export default class TokenStatsPlugin extends Plugin {
       badge.style.display = "none";
       return;
     }
+    // 每次刷新先清空 tooltip，避免从费用模式切回 Token 模式时残留旧文案
+    badge.title = "";
 
     // 优先显示费用限额模式（设了 globalCostLimit 时）
     if (settings.globalCostLimit > 0) {

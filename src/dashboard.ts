@@ -660,7 +660,7 @@ export class Dashboard {
         this.store.clearRecords();
         this.store.save();
         this.keyManager.clearAllAlerts();
-        this.show();
+        this.refreshContent();
         showMessage("记录已清除", 2000, "info");
       });
     });
@@ -676,7 +676,7 @@ export class Dashboard {
         trendAggregation: aggregation,
       });
       this.store.save();
-      this.show();
+      this.refreshContent();
     });
 
     el.querySelector("#tks-trend-reset")?.addEventListener("click", () => {
@@ -686,7 +686,7 @@ export class Dashboard {
         trendAggregation: "daily",
       });
       this.store.save();
-      this.show();
+      this.refreshContent();
     });
   }
 
@@ -698,7 +698,8 @@ export class Dashboard {
     a.href = url;
     a.download = filename;
     a.click();
-    URL.revokeObjectURL(url);
+    // 延迟回收：部分浏览器在 click 触发下载完成前回收 URL 会导致下载失败
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   /** 生成调用记录表的 CSV（含汇总信息表头） */

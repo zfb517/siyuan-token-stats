@@ -821,7 +821,7 @@ export class SettingsPanel {
     setTimeout(() => {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-    }, 0);
+    }, 1000);
     showMessage("费用配置已导出", 2000, "info");
   }
 
@@ -1149,7 +1149,7 @@ export class SettingsPanel {
     setTimeout(() => {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-    }, 0);
+    }, 1000);
     showMessage(`已导出 ${keys.length} 个 API Key`, 2000, "info");
   }
 
@@ -1250,8 +1250,12 @@ export class SettingsPanel {
     const a = document.createElement("a");
     a.href = url;
     a.download = `siyuan-token-stats-${new Date().toISOString().split("T")[0]}.json`;
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 1000);
     showMessage("数据已导出", 2000, "info");
   }
 
