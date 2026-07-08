@@ -297,7 +297,11 @@ export class Interceptor {
     console.log("[TokenStats] Fetch interceptor uninstalled.");
   }
 
-  /** 尝试异步读取请求体文本，兼容多种 body 类型 */
+  /** 尝试异步读取请求体文本，兼容多种 body 类型。
+   *  已覆盖：string / URLSearchParams / FormData / Blob·File / ArrayBuffer·TypedArray / Request 克隆。
+   *  局限：若传入的是 ReadableStream（如手动 new Request 传入流、body 已被锁定或已消费），
+   *  浏览器不允许重复读取，此时无法解析 body 文本，返回 null，该请求将不被估算输入 Token。
+   *  此为浏览器流式读取的固有限制，绝大多数 fetch 调用（JSON / 表单 / 文件）不受影响。 */
   private async extractBodyText(
     input: RequestInfo | URL,
     init?: RequestInit
@@ -1473,7 +1477,9 @@ export class Interceptor {
     return source === "siyuan-ai" || source.includes("/api/ai/");
   }
 
-  /** 获取思源内置 AI 配置（带 5 秒缓存） */
+  /** 获取思源内置 AI 配置（带 5 秒内存缓存，减少频繁读取开销）。
+   *  说明：用户在思源设置中修改 AI 配置后，本缓存最多滞后 5 秒才生效；
+   *  5 秒后首次请求即重新读取，或用户手动刷新/下次请求时生效。此为有意取舍，影响轻微。 */
   private async getSiYuanAiConfig(): Promise<any | null> {
     if (this.siyuanConfigCache && Date.now() - this.siyuanConfigCache.ts < 5000) {
       return this.siyuanConfigCache.config;

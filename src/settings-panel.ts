@@ -334,7 +334,7 @@ export class SettingsPanel {
 
     setting.addItem({
       title: "立即同步统计",
-      description: "手动触发一次思源云同步，并合并其他端的统计记录（例如鸿蒙端打开后一键获取电脑端历史数据），不受上方开关限制。需先在思源「设置 - 关于 - 云端」中配置并启用云同步。",
+      description: "尝试触发思源云同步（调用思源内核 /api/sync/now）并合并其他端的统计记录（例如鸿蒙端打开后一键获取电脑端历史数据），不受上方开关限制。该操作依赖思源自身云同步：需先在思源「设置 - 关于 - 云端」中配置并启用云同步（已登录存储服务）。若思源拒绝或未启用云同步，则只合并本地磁盘上已有的数据。",
       actionElement: this.createButton("立即同步", () => this.handleManualSync()),
     });
 
@@ -415,13 +415,31 @@ export class SettingsPanel {
         showMessage("同步功能未就绪", 2000, "error");
         return;
       }
-      // 先触发思源云同步，把其他端数据拉取到本地磁盘（未配置云同步时静默跳过）
+      // 先尝试触发思源云同步（/api/sync/now），把其他端数据拉取到本地磁盘。
+      // 该接口依赖思源自身的同步引擎，受以下条件约束：
+      //   1) 思源「设置 - 关于 - 云端」已配置并启用云同步（存储服务已登录）；
+      //   2) 当前环境允许插件调用该内核接口（需带 API token 鉴权）。
+      // 若思源未启用云同步 / 未登录 / 拒绝该调用，插件无法强制触发同步，
+      // 此时只合并本地磁盘上已有的数据，并如实提示原因。
       let cloudTriggered = false;
+      let cloudMsg = "";
       try {
-        const resp = await fetch("/api/sync/now", { method: "POST" });
-        cloudTriggered = resp.ok;
-      } catch {
-        cloudTriggered = false;
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        // SiYuan 内核接口需带 token 鉴权（来自运行时全局配置）；本地未设 token 时省略亦不影响同域请求
+        const token = (window as any).siyuan?.config?.api?.token;
+        if (typeof token === "string" && token) {
+          headers["Authorization"] = `Token ${token}`;
+        }
+        const resp = await fetch("/api/sync/now", { method: "POST", headers });
+        // 思源内核接口统一返回 { code, msg, data }（多数情况 HTTP 200），须以 code 判定成败
+        const body = await resp.json().catch(() => null);
+        if (resp.ok && body && body.code === 0) {
+          cloudTriggered = true;
+        } else {
+          cloudMsg = body?.msg ? String(body.msg) : `HTTP ${resp.status}`;
+        }
+      } catch (e) {
+        cloudMsg = e instanceof Error ? e.message : String(e);
       }
       if (cloudTriggered) {
         // 等待云同步完成写入磁盘（S3/WebDAV 可能需要更长时间）
@@ -432,6 +450,12 @@ export class SettingsPanel {
         showMessage("已合并其他端统计", 2000, "info");
       } else if (cloudTriggered) {
         showMessage("已是最新，无新数据（请确认其他端已开启云同步并完成过同步）", 3500, "info");
+      } else if (cloudMsg) {
+        showMessage(
+          `未能触发思源云同步（${cloudMsg}），已合并本地已有数据。请确认已在思源「设置 - 关于 - 云端」启用并登录云同步，或直接在思源内手动同步后再点此按钮。`,
+          6000,
+          "info"
+        );
       } else {
         showMessage("已是最新，无新数据（建议先在思源设置中开启云同步）", 3500, "info");
       }
