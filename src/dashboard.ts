@@ -334,6 +334,12 @@ export class Dashboard {
 
     return `
       <div class="tks-dashboard">
+        ${settings.showDisclaimer !== false ? `
+        <div class="tks-disclaimer-banner" id="tks-disclaimer">
+          <span class="tks-disclaimer-icon">⚠️</span>
+          <span class="tks-disclaimer-text">免责提示：本插件统计数据仅供参考，实际用量与费用请以各 API 供应商的官方账单为准。使用本插件即代表您认可统计结果可能存在误差。</span>
+          <button class="tks-disclaimer-close" id="tks-disclaimer-close" title="关闭后仪表盘将不再显示本免责提示（关闭前需阅读并确认免责声明）">不再提示</button>
+        </div>` : ""}
         <div class="tks-dash-toolbar">
           <label class="tks-split-toggle" title="开启后，「总 Tokens」卡片将拆分展示「精确值（来自 API 响应 usage）」与「启发式估算」各自的 Token 量，便于评估统计可信度">
             <input type="checkbox" id="tks-split-exact" ${settings.dashboardSplitExactEstimate ? "checked" : ""} />
@@ -666,6 +672,18 @@ export class Dashboard {
       const settings = this.store.getSettings();
       this.store.updateSettings({ ...settings, dashboardSplitExactEstimate: checked });
       this.refreshContent();
+    });
+
+    el.querySelector("#tks-disclaimer-close")?.addEventListener("click", () => {
+      confirm(
+        "关闭免责提示",
+        "关闭后仪表盘将不再显示本免责提示。\n\n本插件统计数据仅供参考，实际用量与费用请以各 API 供应商的官方账单为准。使用本插件即代表您认可统计结果可能存在误差。\n\n确认关闭吗？",
+        () => {
+          this.store.updateSettings({ showDisclaimer: false });
+          this.refreshContent();
+          showMessage("已关闭仪表盘免责提示", 2000, "info");
+        }
+      );
     });
 
     // 立即同步：触发云同步 + 合并其他端统计（与设置「立即同步」同一入口）

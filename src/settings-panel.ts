@@ -338,6 +338,32 @@ export class SettingsPanel {
       actionElement: this.createButton("立即同步", () => this.handleManualSync()),
     });
 
+    // ─── 仪表盘免责提示 ───
+    setting.addItem({
+      title: "仪表盘免责提示",
+      description: "开启时，仪表盘顶部常驻显示「数据仅供参考、以 API 供应商账单为准」的免责提示；关闭前需阅读并确认免责声明。",
+      createActionElement: () => {
+        const cb = this.createCheckbox("showDisclaimer", s.showDisclaimer ?? true);
+        cb.addEventListener("change", () => {
+          if (!cb.checked) {
+            confirm(
+              "关闭免责提示",
+              "关闭后仪表盘将不再显示本免责提示。\n\n本插件统计数据仅供参考，实际用量与费用请以各 API 供应商的官方账单为准。使用本插件即代表您认可统计结果可能存在误差。\n\n是否确认关闭？",
+              () => {
+                this.store.updateSettings({ showDisclaimer: false });
+              },
+              () => {
+                cb.checked = true;
+              }
+            );
+          } else {
+            this.store.updateSettings({ showDisclaimer: true });
+          }
+        });
+        return cb;
+      },
+    });
+
     // ─── 数据管理 ───
     setting.addItem({
       title: "导出统计数据",
@@ -492,6 +518,7 @@ export class SettingsPanel {
       globalUsedCostOffset,
       customResetDays,
       syncStatistics: get("syncStatistics"),
+      showDisclaimer: get("showDisclaimer"),
     });
 
     if (shouldResetGlobalAlert) {
@@ -537,6 +564,7 @@ export class SettingsPanel {
     setCheck("showTopBarBadge", s.showTopBarBadge);
     setCheck("debugLogging", s.debugLogging ?? false);
     setCheck("syncStatistics", s.syncStatistics ?? true);
+    setCheck("showDisclaimer", s.showDisclaimer ?? true);
     setVal("max-records", s.maxRecords);
     setVal("globalQuotaLimit", s.globalQuotaLimit);
     setVal("globalAlertThreshold", s.globalAlertThreshold);

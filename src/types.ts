@@ -103,6 +103,8 @@ export interface PluginSettings {
   showTopBarBadge: boolean;
   /** 仪表盘是否拆分展示「精确值 / 启发式估算」总量（默认 false） */
   dashboardSplitExactEstimate?: boolean;
+  /** 仪表盘免责提示：开启时在仪表盘顶部常驻显示「数据仅供参考、以 API 供应商账单为准」提示（默认 true） */
+  showDisclaimer?: boolean;
   /** 最多保留多少条记录 */
   maxRecords: number;
   /** 全局总 Token 限额，0 = 不开启 */

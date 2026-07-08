@@ -166,6 +166,46 @@
   cursor: pointer;
 }
 
+.tks-disclaimer-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 9px 12px;
+  border-radius: 6px;
+  background-color: rgba(220, 160, 0, 0.10);
+  border: 1px solid rgba(200, 150, 0, 0.5);
+  color: var(--b3-theme-on-background);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.tks-disclaimer-icon {
+  flex: 0 0 auto;
+  line-height: 1.5;
+}
+
+.tks-disclaimer-text {
+  flex: 1 1 auto;
+}
+
+.tks-disclaimer-close {
+  flex: 0 0 auto;
+  margin-left: 8px;
+  border: 1px solid var(--b3-theme-border);
+  background: transparent;
+  color: var(--b3-theme-primary);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.tks-disclaimer-close:hover {
+  background-color: var(--b3-theme-surface);
+}
+
 /* ─── 区块 ─── */
 .tks-section {
   margin-bottom: 20px;
