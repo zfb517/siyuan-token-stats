@@ -745,7 +745,16 @@ export class Store {
     const map = this.data.settings.modelPrices || {};
     if (map[key]) return map[key];
     const pack = this.findPackForModel(key);
-    if (pack) return { input: pack.input, output: pack.output };
+    if (pack) {
+      // 打包价模式：按 (totalPrice / totalTokens) 算等效每 token 单价，统一应用到输入/输出/缓存
+      if (pack.totalPrice && pack.totalPrice > 0 && pack.totalTokens > 0) {
+        const perToken = pack.totalPrice / pack.totalTokens;
+        const per1K = perToken * 1000;
+        return { input: per1K, output: per1K, cacheRead: per1K };
+      }
+      // 逐项单价模式
+      return { input: pack.input, output: pack.output, ...(pack.cacheRead ? { cacheRead: pack.cacheRead } : {}) };
+    }
     return null;
   }
 

@@ -21,13 +21,15 @@ export interface PricePack {
   id: string;
   /** 资源包名称（仅展示用） */
   name: string;
-  /** 资源包总 Token 额度（0 = 不限，适用于按总量计费的资源包） */
+  /** 资源包总 Token 额度（0 = 不限，用于按总量计费的资源包） */
   totalTokens: number;
-  /** 每 1K 输入 tokens 价格 */
+  /** 资源包打包总价（>0 时启用打包价模式，忽略逐项单价；费用 = usedTokens/totalTokens * totalPrice） */
+  totalPrice?: number;
+  /** 每 1K 输入 tokens 价格（totalPrice > 0 时忽略） */
   input: number;
-  /** 每 1K 输出 tokens 价格 */
+  /** 每 1K 输出 tokens 价格（totalPrice > 0 时忽略） */
   output: number;
-  /** 每 1K 缓存命中 tokens 价格（可选） */
+  /** 每 1K 缓存命中 tokens 价格（可选，totalPrice > 0 时忽略） */
   cacheRead?: number;
   /** 该资源包涵盖的模型名列表（保存时归一化为小写，匹配时忽略大小写） */
   models: string[];

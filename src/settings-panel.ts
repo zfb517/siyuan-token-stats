@@ -668,6 +668,7 @@ export class SettingsPanel {
       <div class="tks-pack-row" data-pack-id="${esc(pack.id)}">
         <input type="text" class="b3-text-field tks-pack-name" value="${esc(pack.name)}" placeholder="资源包名（如 通义千问）" />
         <input type="number" step="1" min="0" class="b3-text-field tks-pack-total" value="${esc(String(pack.totalTokens || 0))}" placeholder="总 Tokens（0 不限）" />
+        <input type="number" step="0.01" min="0" class="b3-text-field tks-pack-totalprice" value="${esc(String(pack.totalPrice ?? ""))}" placeholder="打包总价（¥）" title="填入后启用打包价模式：费用 = 已用 tokens / 总 tokens × 总价格，忽略下方逐项单价。留空或 0 则使用逐项单价模式。" />
         <input type="number" step="0.0001" min="0" class="b3-text-field tks-pack-input" value="${esc(String(pack.input))}" placeholder="输入单价/1K" />
         <input type="number" step="0.0001" min="0" class="b3-text-field tks-pack-cache" value="${esc(String(pack.cacheRead ?? 0))}" placeholder="缓存命中单价/1K" />
         <input type="number" step="0.0001" min="0" class="b3-text-field tks-pack-output" value="${esc(String(pack.output))}" placeholder="输出单价/1K" />
@@ -708,10 +709,11 @@ export class SettingsPanel {
       <div class="tks-price-toolbar">
         <button class="b3-button b3-button--text" id="tks-price-add">+ 添加模型</button>
       </div>
-      <div class="tks-price-section-title">资源包（一个资源包可涵盖多个模型，包内模型共用同一单价；「总 Tokens」填该资源包的总额度，0 表示不限，用于按总量计费的资源包）</div>
+      <div class="tks-price-section-title">资源包（一个资源包可涵盖多个模型；支持两种计价模式：① 逐项单价（输入/缓存命中/输出分别设每 1K 价格）；② 打包总价（填「总价格 + 总 Tokens」，系统自动折算等效单价，适用于按量计费的套餐））</div>
       <div class="tks-pack-header">
         <span class="tks-pack-hd-name">名称</span>
         <span class="tks-pack-hd-total">总 Tokens</span>
+        <span class="tks-pack-hd-totalprice">打包总价</span>
         <span class="tks-pack-hd-input">输入/1K</span>
         <span class="tks-pack-hd-cache">缓存命中/1K</span>
         <span class="tks-pack-hd-output">输出/1K</span>
@@ -790,6 +792,7 @@ export class SettingsPanel {
         const id = (row as HTMLElement).dataset.packId || `pack-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
         const name = ((row.querySelector(".tks-pack-name") as HTMLInputElement)?.value || "").trim();
         const totalTokens = parseInt((row.querySelector(".tks-pack-total") as HTMLInputElement)?.value || "0", 10) || 0;
+        const totalPrice = parseFloat((row.querySelector(".tks-pack-totalprice") as HTMLInputElement)?.value || "0") || 0;
         const input = parseFloat((row.querySelector(".tks-pack-input") as HTMLInputElement)?.value || "0") || 0;
         const cacheRead = parseFloat((row.querySelector(".tks-pack-cache") as HTMLInputElement)?.value || "0") || 0;
         const output = parseFloat((row.querySelector(".tks-pack-output") as HTMLInputElement)?.value || "0") || 0;
@@ -798,7 +801,7 @@ export class SettingsPanel {
           .map((x) => x.toLowerCase().trim().replace(/[\s\-_]+/g, ""))
           .filter(Boolean);
         if (name || models.length > 0) {
-          finalPacks.push({ id, name, totalTokens, input, output, ...(cacheRead > 0 ? { cacheRead } : {}), models });
+          finalPacks.push({ id, name, totalTokens, ...(totalPrice > 0 ? { totalPrice } : {}), input, output, ...(cacheRead > 0 ? { cacheRead } : {}), models });
         }
       });
       const cur = (container.querySelector("#tks-price-currency") as HTMLSelectElement)?.value || "¥";
