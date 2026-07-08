@@ -2,7 +2,7 @@
  * 设置面板
  * 使用 SiYuan 的 Setting 类构建设置页，API Key 管理使用自定义 Dialog。
  */
-import { Setting, Dialog, showMessage, confirm, getFrontend } from "siyuan";
+import { Setting, Dialog, showMessage, confirm, getFrontend, fetchSyncPost } from "siyuan";
 import type { Store } from "./store";
 import type { KeyManager } from "./key-manager";
 import type { ApiKeyConfig, QuotaResetCycle, ModelPrice, PricePack } from "./types";
@@ -334,7 +334,7 @@ export class SettingsPanel {
 
     setting.addItem({
       title: "立即同步统计",
-      description: "尝试触发思源云同步（调用思源内核 /api/sync/now）并合并其他端的统计记录（例如鸿蒙端打开后一键获取电脑端历史数据），不受上方开关限制。该操作依赖思源自身云同步：需先在思源「设置 - 关于 - 云端」中配置并启用云同步（已登录存储服务）。若思源拒绝或未启用云同步，则只合并本地磁盘上已有的数据。",
+      description: "触发思源云同步（通过官方内核 API /api/sync/performSync）并合并其他端的统计记录（例如手机端一键拉取电脑端历史数据），不受上方开关限制。需先在思源「设置 - 关于 - 云端」中配置并启用云同步（已登录 S3/WebDAV 等存储服务）。若思源未配置云同步，则只合并本地已有数据。",
       actionElement: this.createButton("立即同步", () => this.handleManualSync()),
     });
 
@@ -403,7 +403,7 @@ export class SettingsPanel {
     return input;
   }
 
-  /** 「立即同步」按钮回调：先触发思源云同步把其他端数据拉到本地磁盘，再合并，并给出结果反馈 */
+  /** 「立即同步」按钮回调：先通过思源内核 API 触发云同步，再合并统计 */
   private async handleManualSync(): Promise<void> {
     const btn = document.activeElement as HTMLButtonElement | null;
     if (btn) {
@@ -415,44 +415,37 @@ export class SettingsPanel {
         showMessage("同步功能未就绪", 2000, "error");
         return;
       }
-      // 先尝试触发思源云同步（/api/sync/now），把其他端数据拉取到本地磁盘。
-      // 该接口依赖思源自身的同步引擎，受以下条件约束：
-      //   1) 思源「设置 - 关于 - 云端」已配置并启用云同步（存储服务已登录）；
-      //   2) 当前环境允许插件调用该内核接口（需带 API token 鉴权）。
-      // 若思源未启用云同步 / 未登录 / 拒绝该调用，插件无法强制触发同步，
-      // 此时只合并本地磁盘上已有的数据，并如实提示原因。
+      // 使用思源官方插件 API fetchSyncPost 调用 /api/sync/performSync。
+      // fetchSyncPost 由思源 SDK 提供，内部自动携带 Authorization 鉴权，
+      // 无需手动获取或拼接 token。该接口支持 S3 / WebDAV / SiYuan Cloud 等所有同步提供商。
+      // 同步操作在后台异步执行，接口返回 code=0 仅表示已成功触发。
       let cloudTriggered = false;
       let cloudMsg = "";
       try {
-        const headers: Record<string, string> = { "Content-Type": "application/json" };
-        // SiYuan 内核接口需带 token 鉴权（来自运行时全局配置）；本地未设 token 时省略亦不影响同域请求
-        const token = (window as any).siyuan?.config?.api?.token;
-        if (typeof token === "string" && token) {
-          headers["Authorization"] = `Token ${token}`;
-        }
-        const resp = await fetch("/api/sync/now", { method: "POST", headers });
-        // 思源内核接口统一返回 { code, msg, data }（多数情况 HTTP 200），须以 code 判定成败
-        const body = await resp.json().catch(() => null);
-        if (resp.ok && body && body.code === 0) {
+        const result = await fetchSyncPost("/api/sync/performSync", {
+          app: "siyuan-token-stats",
+        });
+        if (result.code === 0) {
           cloudTriggered = true;
         } else {
-          cloudMsg = body?.msg ? String(body.msg) : `HTTP ${resp.status}`;
+          cloudMsg = result.msg ? String(result.msg) : `code=${result.code}`;
         }
       } catch (e) {
         cloudMsg = e instanceof Error ? e.message : String(e);
       }
       if (cloudTriggered) {
-        // 等待云同步完成写入磁盘（S3/WebDAV 可能需要更长时间）
-        await new Promise((r) => setTimeout(r, 4000));
+        // performSync 为异步后台执行，等待同步完成写入磁盘（S3/WebDAV 需要更长时间）
+        showMessage("已触发思源云同步，等待同步完成…", 2000, "info");
+        await new Promise((r) => setTimeout(r, 5000));
       }
       const changed = await this.onManualSync();
       if (changed) {
         showMessage("已合并其他端统计", 2000, "info");
       } else if (cloudTriggered) {
-        showMessage("已是最新，无新数据（请确认其他端已开启云同步并完成过同步）", 3500, "info");
+        showMessage("已是最新，无新数据（请确认其他端已完成过云同步）", 3500, "info");
       } else if (cloudMsg) {
         showMessage(
-          `未能触发思源云同步（${cloudMsg}），已合并本地已有数据。请确认已在思源「设置 - 关于 - 云端」启用并登录云同步，或直接在思源内手动同步后再点此按钮。`,
+          `未能触发思源云同步：${cloudMsg}。请先在思源「设置 - 关于 - 云端」启用并登录云同步，再点此按钮。`,
           6000,
           "info"
         );
