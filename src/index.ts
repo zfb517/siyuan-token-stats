@@ -106,14 +106,14 @@ export default class TokenStatsPlugin extends Plugin {
     this.syncHandler = (e: any) => {
       const detailStr = typeof e?.detail === "string" ? e.detail : JSON.stringify(e?.detail ?? "");
       console.log("[TokenStats] Sync event received, merging data...", detailStr.substring(0, 100));
-      // 延迟 1 秒等待思源完成文件同步写入
-      setTimeout(() => this.mergeFromRemote(), 1000);
+      // 延迟 2.5 秒等待思源完成文件同步写入（S3/WebDAV 云同步可能较慢）
+      setTimeout(() => this.mergeFromRemote(), 2500);
     };
     this.eventBus.on("sync-end", this.syncHandler);
 
     // 10. 云同步可能在插件加载前就已结束（尤其移动端/鸿蒙 NEXT 上），
     //     因此加载后延迟合并一次，并启动周期合并，确保设置/数据一定能跨端收敛。
-    setTimeout(() => this.mergeFromRemote(), 3000);
+    setTimeout(() => this.mergeFromRemote(), 5000);
     this.mergeTimer = window.setInterval(() => this.mergeFromRemote(), 60000);
 
     console.log("[TokenStats] Plugin loaded successfully.");

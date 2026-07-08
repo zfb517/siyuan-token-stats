@@ -508,26 +508,16 @@ export class Store {
    */
   async mergeFromRemote(): Promise<boolean> {
     try {
-      // 读取磁盘上的主文件（官方 API 优先，裸 fetch 兜底），与内存数据合并
-      let remote: Partial<PluginData> | null = null;
-      if (this.plugin && typeof this.plugin.loadData === "function") {
-        try {
-          const d = await this.plugin.loadData(FILE_NAME);
-          if (d && typeof d === "object" && !Array.isArray(d)) remote = d as Partial<PluginData>;
-        } catch {
-          // 官方 API 读取失败，回落到 fetch
-        }
-      }
+      // ── 读取磁盘上的主文件（使用与 load() 相同的可靠路径）──
+      // 重要：必须走 readOfficial() 而非内联读取代码，确保：
+      //   ① normalizeData 自动处理字符串返回值和空对象
+      //   ② 官方 API 失败时自动回落裸 fetch
+      //   ③ 每条路径都有诊断日志
+      const remote = await this.readOfficial(FILE_NAME);
       if (!remote) {
-        const response = await fetch(
-          `/api/file/getFile?path=${encodeURIComponent(STORAGE_PATH)}`
-        );
-        if (!response.ok) return false;
-        const text = await response.text();
-        if (!text) return false;
-        remote = JSON.parse(text) as Partial<PluginData>;
+        console.warn("[TokenStats] mergeFromRemote: 无法读取远程数据文件，合并跳过");
+        return false;
       }
-      if (!remote) return false;
 
       const local = this.data;
       const remoteLastSavedAt = remote.lastSavedAt || 0;
@@ -537,11 +527,18 @@ export class Store {
       const localSettingsUpdatedAt = local.settingsUpdatedAt || 0;
       const localKeysUpdatedAt = local.keysUpdatedAt || 0;
 
-      // 如果远程数据与本地完全一致（未变化），跳过
+      // 如果远程数据与本地完全一致（未变化），跳过。
+      // 同时比较时间戳 + 记录数 + Key 数，防止仅靠时间戳判断漏掉实际数据差异。
+      const remoteRecordCount = (remote.records || []).length;
+      const localRecordCount = (local.records || []).length;
+      const remoteKeyCount = (remote.apiKeys || []).length;
+      const localKeyCount = (local.apiKeys || []).length;
       if (
         remoteLastSavedAt === localLastSavedAt &&
         remoteSettingsUpdatedAt === localSettingsUpdatedAt &&
         remoteKeysUpdatedAt === localKeysUpdatedAt &&
+        remoteRecordCount === localRecordCount &&
+        remoteKeyCount === localKeyCount &&
         remoteLastSavedAt > 0
       ) {
         console.log("[TokenStats] Sync merge: data unchanged, skipping.");
@@ -549,7 +546,7 @@ export class Store {
       }
 
       console.log(
-        `[TokenStats] Sync merge: local ls=${localLastSavedAt} lset=${localSettingsUpdatedAt} lkey=${localKeysUpdatedAt}, remote rs=${remoteLastSavedAt} rset=${remoteSettingsUpdatedAt} rkey=${remoteKeysUpdatedAt}`
+        `[TokenStats] Sync merge: local ls=${localLastSavedAt} lset=${localSettingsUpdatedAt} lkey=${localKeysUpdatedAt} lr=${localRecordCount} lk=${localKeyCount}, remote rs=${remoteLastSavedAt} rset=${remoteSettingsUpdatedAt} rkey=${remoteKeysUpdatedAt} rr=${remoteRecordCount} rk=${remoteKeyCount}`
       );
 
       // ── 合并 Records：按 ID 并集去重 ──

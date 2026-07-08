@@ -424,8 +424,8 @@ export class SettingsPanel {
         cloudTriggered = false;
       }
       if (cloudTriggered) {
-        // 等待云同步完成写入磁盘
-        await new Promise((r) => setTimeout(r, 2500));
+        // 等待云同步完成写入磁盘（S3/WebDAV 可能需要更长时间）
+        await new Promise((r) => setTimeout(r, 4000));
       }
       const changed = await this.onManualSync();
       if (changed) {
