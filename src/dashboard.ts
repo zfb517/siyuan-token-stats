@@ -345,6 +345,7 @@ export class Dashboard {
             <input type="checkbox" id="tks-split-exact" ${settings.dashboardSplitExactEstimate ? "checked" : ""} />
             <span>区分精确/估算</span>
           </label>
+          <span class="tks-split-hint">仅 v1.4.19+ 新增记录区分精确/估算；旧记录统一计入估算</span>
         </div>
         <!-- 汇总卡片 -->
         <div class="tks-summary-cards">

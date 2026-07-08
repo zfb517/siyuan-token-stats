@@ -5,16 +5,16 @@
 \r
 /* ─── 仪表盘 ─── */\r
 .tks-dashboard {\r
-  padding: 16px 20px;\r
+  padding: 12px 16px;\r
   max-height: calc(100vh - 120px);\r
   overflow-y: auto;\r
 }\r
 \r
 .tks-summary-cards {\r
   display: grid;\r
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));\r
-  gap: 10px;\r
-  margin-bottom: 20px;\r
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));\r
+  gap: 8px;\r
+  margin-bottom: 12px;\r
 }\r
 \r
 @media (max-width: 800px) {\r
@@ -113,8 +113,8 @@
 .tks-card {\r
   display: flex;\r
   align-items: center;\r
-  gap: 10px;\r
-  padding: 12px 14px;\r
+  gap: 8px;\r
+  padding: 10px 12px;\r
   background: var(--b3-theme-surface);\r
   border: 1px solid var(--b3-border-color);\r
   border-radius: 8px;\r
@@ -149,7 +149,7 @@
   display: flex;\r
   align-items: center;\r
   gap: 12px;\r
-  margin-bottom: 14px;\r
+  margin-bottom: 10px;\r
 }\r
 \r
 .tks-split-toggle {\r
@@ -166,17 +166,24 @@
   cursor: pointer;\r
 }\r
 \r
+.tks-split-hint {\r
+  font-size: 11px;\r
+  color: var(--b3-theme-on-surface-light, #999);\r
+  font-style: italic;\r
+}\r
+\r
 .tks-disclaimer-banner {\r
   display: flex;\r
   align-items: flex-start;\r
   gap: 8px;\r
   margin-bottom: 14px;\r
-  padding: 9px 12px;\r
-  border-radius: 6px;\r
-  background-color: rgba(220, 160, 0, 0.10);\r
-  border: 1px solid rgba(200, 150, 0, 0.5);\r
-  color: var(--b3-theme-on-background);\r
-  font-size: 12px;\r
+  padding: 10px 14px;\r
+  border-radius: 4px;\r
+  background-color: #fef2e8;\r
+  border: 2px solid #d97706;\r
+  color: #92400e;\r
+  font-size: 13px;\r
+  font-weight: 600;\r
   line-height: 1.5;\r
 }\r
 \r
@@ -192,31 +199,33 @@
 .tks-disclaimer-close {\r
   flex: 0 0 auto;\r
   margin-left: 8px;\r
-  border: 1px solid var(--b3-theme-border);\r
+  border: 1px solid #b45309;\r
   background: transparent;\r
-  color: var(--b3-theme-primary);\r
+  color: #b45309;\r
   cursor: pointer;\r
   font-size: 12px;\r
+  font-weight: 600;\r
   padding: 2px 8px;\r
   border-radius: 4px;\r
   white-space: nowrap;\r
 }\r
 \r
 .tks-disclaimer-close:hover {\r
-  background-color: var(--b3-theme-surface);\r
+  background-color: #d97706;\r
+  color: #fff;\r
 }\r
 \r
 /* ─── 区块 ─── */\r
 .tks-section {\r
-  margin-bottom: 20px;\r
+  margin-bottom: 14px;\r
 }\r
 \r
 .tks-section-title {\r
   font-size: 14px;\r
   font-weight: 600;\r
   color: var(--b3-theme-on-background);\r
-  margin: 0 0 10px 0;\r
-  padding-bottom: 6px;\r
+  margin: 0 0 8px 0;\r
+  padding-bottom: 4px;\r
   border-bottom: 1px solid var(--b3-border-color);\r
 }\r
 \r
@@ -228,7 +237,7 @@
 }\r
 \r
 .tks-key-stat {\r
-  padding: 10px 12px;\r
+  padding: 8px 10px;\r
   background: var(--b3-theme-surface);\r
   border: 1px solid var(--b3-border-color);\r
   border-radius: 6px;\r
@@ -335,7 +344,7 @@
 /* ─── 每日趋势图 ─── */\r
 .tks-daily-chart {\r
   width: 100%;\r
-  padding: 10px;\r
+  padding: 8px;\r
   background: var(--b3-theme-surface);\r
   border: 1px solid var(--b3-border-color);\r
   border-radius: 6px;\r
@@ -351,8 +360,8 @@
 .tks-trend-legend {\r
   display: flex;\r
   flex-wrap: wrap;\r
-  gap: 12px;\r
-  margin-top: 8px;\r
+  gap: 10px;\r
+  margin-top: 6px;\r
   font-size: 12px;\r
   color: var(--b3-theme-on-surface);\r
 }\r
@@ -477,7 +486,7 @@
   display: flex;\r
   gap: 8px;\r
   justify-content: flex-end;\r
-  padding-top: 10px;\r
+  padding-top: 8px;\r
   border-top: 1px solid var(--b3-border-color);\r
 }\r
 \r
@@ -1091,6 +1100,7 @@
             <input type="checkbox" id="tks-split-exact" ${n.dashboardSplitExactEstimate?"checked":""} />
             <span>区分精确/估算</span>
           </label>
+          <span class="tks-split-hint">仅 v1.4.19+ 新增记录区分精确/估算；旧记录统一计入估算</span>
         </div>
         <!-- 汇总卡片 -->
         <div class="tks-summary-cards">
