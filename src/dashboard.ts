@@ -83,7 +83,6 @@ export class Dashboard {
       this.dialog = new Dialog({
         title: "📊 Token 用量统计",
         width: mobile ? "95vw" : "900px",
-        height: mobile ? "85vh" : "700px",
         content: this.renderHTML(this.summary),
         destroyCallback: () => {
           if (this.refreshTimer) {
@@ -526,8 +525,8 @@ export class Dashboard {
     const data = s.dailyStats;
     const n = data.length;
     if (n === 0) return "";
-    const W = 720, H = 260;
-    const padL = 48, padR = 52, padT = 18, padB = 30;
+    const W = 720, H = 120;
+    const padL = 48, padR = 52, padT = 10, padB = 20;
     const plotW = W - padL - padR;
     const plotH = H - padT - padB;
     const maxTokens = Math.max(...data.map((d) => d.tokens), 1);
@@ -595,7 +594,7 @@ export class Dashboard {
       xlabels += `<text x="${xCenter(i).toFixed(1)}" y="${padT + plotH + 14}" text-anchor="middle" font-size="9" fill="#8a8a8a">${esc(lab)}</text>`;
     }
 
-    return `<svg class="tks-trend-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" width="100%">${grid}${bars}${line}${xlabels}</svg>`;
+    return `<svg class="tks-trend-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMin slice">${grid}${bars}${line}${xlabels}</svg>`;
   }
 
   /** 趋势图例：模型色块 + 费用折线说明 */
