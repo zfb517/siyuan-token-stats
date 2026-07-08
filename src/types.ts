@@ -8,6 +8,8 @@ export interface ModelPrice {
   input: number;
   /** 每 1K 输出 tokens 价格 */
   output: number;
+  /** 每 1K 缓存命中（cache_read / cached_input）tokens 价格，0 或不填表示不支持/不单独计费 */
+  cacheRead?: number;
 }
 
 /**
@@ -25,6 +27,8 @@ export interface PricePack {
   input: number;
   /** 每 1K 输出 tokens 价格 */
   output: number;
+  /** 每 1K 缓存命中 tokens 价格（可选） */
+  cacheRead?: number;
   /** 该资源包涵盖的模型名列表（保存时归一化为小写，匹配时忽略大小写） */
   models: string[];
 }
@@ -66,6 +70,8 @@ export interface TokenRecord {
   model: string;
   inputTokens: number;
   outputTokens: number;
+  /** 缓存命中 tokens 数（API 返回的 cached_input_tokens / cache_read_input_tokens 等） */
+  cacheReadTokens?: number;
   totalTokens: number;
   timestamp: number;
   requestTime: number;

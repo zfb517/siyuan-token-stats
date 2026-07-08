@@ -544,7 +544,7 @@ export class Store {
     }
     // 关闭「单价变更后自动重算」时，把当前费用写入记录作为固定快照
     if (this.data.settings.recalcCostOnPriceChange === false) {
-      record.cost = this.calcCost(record.model, record.inputTokens, record.outputTokens);
+      record.cost = this.calcCost(record.model, record.inputTokens, record.outputTokens, record.cacheReadTokens);
     }
     recs.push(record);
     // 超出上限时裁剪旧记录
@@ -640,12 +640,17 @@ export class Store {
    * 计算单次调用的估算费用（货币单位）。
    * 未配置该模型单价时返回 0。
    */
-  calcCost(model: string, inputTokens: number, outputTokens: number): number {
+  calcCost(model: string, inputTokens: number, outputTokens: number, cacheReadTokens?: number): number {
     const price = this.getModelPrice(model);
     if (!price) return 0;
     const inputCost = (inputTokens / 1000) * price.input;
     const outputCost = (outputTokens / 1000) * price.output;
-    return inputCost + outputCost;
+    let total = inputCost + outputCost;
+    // 缓存命中 tokens 按独立折扣单价计费（若已配置）
+    if (price.cacheRead && cacheReadTokens && cacheReadTokens > 0) {
+      total += (cacheReadTokens / 1000) * price.cacheRead;
+    }
+    return total;
   }
 
   /** 格式化费用显示，如 ¥0.0123 */
@@ -661,10 +666,10 @@ export class Store {
    */
   getRecordCost(r: TokenRecord): number {
     if (this.data.settings.recalcCostOnPriceChange !== false) {
-      return this.calcCost(r.model, r.inputTokens, r.outputTokens);
+      return this.calcCost(r.model, r.inputTokens, r.outputTokens, r.cacheReadTokens);
     }
     if (typeof r.cost === "number") return r.cost;
-    return this.calcCost(r.model, r.inputTokens, r.outputTokens);
+    return this.calcCost(r.model, r.inputTokens, r.outputTokens, r.cacheReadTokens);
   }
 
   /**

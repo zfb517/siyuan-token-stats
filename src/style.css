@@ -715,7 +715,7 @@
 }
 .tks-price-row {
   display: grid;
-  grid-template-columns: 1fr 110px 110px 36px;
+  grid-template-columns: 1fr 100px 100px 100px 36px;
   gap: 8px;
   align-items: center;
 }
@@ -723,7 +723,7 @@
 /* 按模型单价列表列标题 */
 .tks-price-header {
   display: grid;
-  grid-template-columns: 1fr 110px 110px 36px;
+  grid-template-columns: 1fr 100px 100px 100px 36px;
   gap: 8px;
   align-items: center;
   padding: 4px 0;
@@ -732,6 +732,7 @@
   font-weight: 500;
 }
 .tks-price-hd-input,
+.tks-price-hd-cache,
 .tks-price-hd-output {
   text-align: center;
 }
@@ -769,7 +770,7 @@
 }
 .tks-pack-row {
   display: grid;
-  grid-template-columns: 1.3fr 110px 80px 80px 1.5fr 36px;
+  grid-template-columns: 1.2fr 100px 75px 75px 75px 1.4fr 36px;
   gap: 8px;
   align-items: center;
 }
@@ -789,7 +790,7 @@
 /* 资源包列表列标题 */
 .tks-pack-header {
   display: grid;
-  grid-template-columns: 1.3fr 110px 80px 80px 1.5fr 36px;
+  grid-template-columns: 1.2fr 100px 75px 75px 75px 1.4fr 36px;
   gap: 8px;
   align-items: center;
   padding: 4px 0;
@@ -799,6 +800,7 @@
 }
 .tks-pack-hd-total,
 .tks-pack-hd-input,
+.tks-pack-hd-cache,
 .tks-pack-hd-output {
   text-align: center;
 }

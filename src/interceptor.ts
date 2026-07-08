@@ -710,6 +710,7 @@ export class Interceptor {
   ): Promise<void> {
     let inputTokens = 0;
     let outputTokens = 0;
+    let cacheReadTokens: number | undefined;
     let model = aiCall.model;
 
     const contentType = (response.headers.get("content-type") || "").toLowerCase();
@@ -746,6 +747,7 @@ export class Interceptor {
         const result = await this.parseSSEStream(response, aiCall, settings, estimatedInput);
         inputTokens = result.inputTokens;
         outputTokens = result.outputTokens;
+        cacheReadTokens = result.cacheReadTokens;
         if (result.model) model = result.model;
         if (result.aborted) {
           success = false;
@@ -767,6 +769,7 @@ export class Interceptor {
         if (usage) {
           inputTokens = usage.inputTokens;
           outputTokens = usage.outputTokens;
+          cacheReadTokens = usage.cacheReadTokens || undefined;
         }
         if (data?.model) {
           model = pickValidModelName(data.model, model) || model;
@@ -784,6 +787,7 @@ export class Interceptor {
         const result = await this.parseNDJSONStream(response, aiCall, settings, estimatedInput);
         inputTokens = result.inputTokens;
         outputTokens = result.outputTokens;
+        cacheReadTokens = result.cacheReadTokens;
         if (result.model) model = result.model;
         if (result.aborted) success = false;
       } else if (contentType.includes("text/plain") || contentType.includes("text/html") || contentType.includes("application/xml") || contentType.includes("text/xml")) {
@@ -802,6 +806,7 @@ export class Interceptor {
           if (usage) {
             inputTokens = usage.inputTokens;
             outputTokens = usage.outputTokens;
+            cacheReadTokens = usage.cacheReadTokens || undefined;
           } else {
             outputTokens = this.tokenCounter.estimateFromText(this.extractOutputText(asJson));
           }
@@ -831,7 +836,7 @@ export class Interceptor {
 
     // 记录本次调用（无论 token 是否为 0，都需记录以反映真实请求量）
     const totalTokens = inputTokens + outputTokens;
-    this.recordCall(aiCall, inputTokens, outputTokens, startTime, success, model);
+    this.recordCall(aiCall, inputTokens, outputTokens, startTime, success, model, cacheReadTokens);
 
     // 检查阈值（全局 + 单 Key）— 仅在有实际 token 消耗时检查，避免 0-token 请求触发误报
     if (totalTokens > 0 && settings.showNotifications) {
@@ -853,6 +858,7 @@ export class Interceptor {
   ): Promise<{
     inputTokens: number;
     outputTokens: number;
+    cacheReadTokens?: number;
     model?: string;
     aborted: boolean;
   }> {
@@ -864,7 +870,7 @@ export class Interceptor {
     // 使用容器对象避免 TypeScript 闭包类型 narrowing 问题
     const state = {
       fullContent: "",
-      usage: null as { inputTokens: number; outputTokens: number } | null,
+      usage: null as { inputTokens: number; outputTokens: number; cacheReadTokens: number } | null,
       model: undefined as string | undefined,
     };
     let estimatedOutputTokens = 0;
@@ -985,6 +991,7 @@ export class Interceptor {
       return {
         inputTokens: state.usage.inputTokens || estimatedInput,
         outputTokens: state.usage.outputTokens || estimatedOutput,
+        cacheReadTokens: state.usage.cacheReadTokens || undefined,
         model: state.model,
         aborted,
       };
@@ -1016,12 +1023,12 @@ export class Interceptor {
   /** 从单个 SSE/NDJSON 数据块中提取 usage / model / content，返回更新后的状态 */
   private collectChunkInfo(
     chunk: any,
-    usage: { inputTokens: number; outputTokens: number } | null,
+    usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number } | null,
     model: string | undefined,
     fullContent: string,
     eventType: string = ""
   ): {
-    usage: { inputTokens: number; outputTokens: number } | null;
+    usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number } | null;
     model: string | undefined;
     fullContent: string;
   } {
@@ -1061,7 +1068,7 @@ export class Interceptor {
       const completionTokens = chunk.completionTokens ?? chunk.completion_tokens ?? 0;
       this.logDebug("SiYuan agent usage event", { promptTokens, completionTokens, chunk });
       if (promptTokens > 0 || completionTokens > 0) {
-        usage = { inputTokens: promptTokens, outputTokens: completionTokens };
+        usage = { inputTokens: promptTokens, outputTokens: completionTokens, cacheReadTokens: chunk.cacheReadTokens ?? chunk.cachedInputTokens ?? 0 };
       }
       return { usage, model, fullContent };
     }
@@ -1077,9 +1084,13 @@ export class Interceptor {
     // OpenAI 格式
     if (chunk.usage) {
       const u = chunk.usage;
+      const cacheReadTokens =
+        u.cached_input_tokens ?? u.cache_read_input_tokens ??
+        u.prompt_tokens_details?.cached_tokens ?? 0;
       usage = {
         inputTokens: u.prompt_tokens ?? u.input_tokens ?? u.promptTokens ?? 0,
         outputTokens: u.completion_tokens ?? u.output_tokens ?? u.completionTokens ?? 0,
+        cacheReadTokens,
       };
     }
 
@@ -1112,9 +1123,11 @@ export class Interceptor {
     }
     if (chunk.message?.usage) {
       const u = chunk.message.usage;
+      const cacheReadTokens = u.cache_read_input_tokens ?? 0;
       usage = {
         inputTokens: u.input_tokens ?? 0,
         outputTokens: u.output_tokens ?? 0,
+        cacheReadTokens,
       };
     }
     if (chunk.content) {
@@ -1152,6 +1165,7 @@ export class Interceptor {
       usage = {
         inputTokens: u.prompt_tokens ?? u.input_tokens ?? 0,
         outputTokens: u.completion_tokens ?? u.output_tokens ?? 0,
+        cacheReadTokens: u.cached_input_tokens ?? u.cache_read_input_tokens ?? 0,
       };
     }
     if (chunk.data?.content) {
@@ -1176,6 +1190,7 @@ export class Interceptor {
   ): Promise<{
     inputTokens: number;
     outputTokens: number;
+    cacheReadTokens?: number;
     model?: string;
     aborted: boolean;
   }> {
@@ -1185,7 +1200,7 @@ export class Interceptor {
     const decoder = new TextDecoder();
     let buffer = "";
     let fullContent = "";
-    let usage: { inputTokens: number; outputTokens: number } | null = null;
+    let usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number } | null = null;
     let model: string | undefined;
     let aborted = false;
 
@@ -1263,6 +1278,7 @@ export class Interceptor {
       return {
         inputTokens: usage.inputTokens || estimatedInput,
         outputTokens: usage.outputTokens || estimatedOutput,
+        cacheReadTokens: usage.cacheReadTokens || undefined,
         model,
         aborted,
       };
@@ -1276,7 +1292,7 @@ export class Interceptor {
   }
 
   /** 从 JSON 响应中提取 usage */
-  private extractUsage(data: any): { inputTokens: number; outputTokens: number } | null {
+  private extractUsage(data: any): { inputTokens: number; outputTokens: number; cacheReadTokens: number } | null {
     // 标准 OpenAI / Anthropic 格式：usage 子对象
     if (data?.usage) {
       const u = data.usage;
@@ -1284,15 +1300,20 @@ export class Interceptor {
         u.prompt_tokens ?? u.input_tokens ?? u.promptTokens ?? 0;
       const outputTokens =
         u.completion_tokens ?? u.output_tokens ?? u.completionTokens ?? 0;
-      if (inputTokens === 0 && outputTokens === 0) return null;
-      return { inputTokens, outputTokens };
+      // 缓存命中 tokens：OpenAI cached_input_tokens / cache_read_input_tokens / prompt_tokens_details.cached_tokens
+      const cacheReadTokens =
+        u.cached_input_tokens ?? u.cache_read_input_tokens ??
+        u.prompt_tokens_details?.cached_tokens ?? 0;
+      if (inputTokens === 0 && outputTokens === 0 && cacheReadTokens === 0) return null;
+      return { inputTokens, outputTokens, cacheReadTokens };
     }
     // 思源智能体 usage 事件格式：顶层 promptTokens / completionTokens
     if (data?.promptTokens !== undefined || data?.completionTokens !== undefined) {
       const inputTokens = data.promptTokens ?? 0;
       const outputTokens = data.completionTokens ?? 0;
+      const cacheReadTokens = data.cacheReadTokens ?? data.cachedInputTokens ?? 0;
       if (inputTokens === 0 && outputTokens === 0) return null;
-      return { inputTokens, outputTokens };
+      return { inputTokens, outputTokens, cacheReadTokens };
     }
     return null;
   }
@@ -1394,7 +1415,8 @@ export class Interceptor {
     outputTokens: number,
     startTime: number,
     success: boolean,
-    model?: string
+    model?: string,
+    cacheReadTokens?: number
   ): void {
     const finalModel = this.resolveModelName(model || aiCall.model, aiCall);
     const record: TokenRecord = {
@@ -1405,13 +1427,14 @@ export class Interceptor {
       model: finalModel,
       inputTokens,
       outputTokens,
+      cacheReadTokens,
       totalTokens: inputTokens + outputTokens,
       timestamp: startTime,
       requestTime: Date.now() - startTime,
       success,
     };
     this.store.addRecord(record);
-    this.logDebug(`Recorded: ${record.apiKeyName} | ${record.model} | in=${inputTokens} out=${outputTokens} total=${record.totalTokens} success=${success}`);
+    this.logDebug(`Recorded: ${record.apiKeyName} | ${record.model} | in=${inputTokens} out=${outputTokens} cache=${cacheReadTokens ?? 0} total=${record.totalTokens} success=${success}`);
     if (success && inputTokens === 0 && outputTokens === 0) {
       console.warn("[TokenStats] 本次请求 token 计数为 0。若持续出现，请在设置中开启“启用调试日志”，并在浏览器控制台中查看请求/响应详情。");
     }

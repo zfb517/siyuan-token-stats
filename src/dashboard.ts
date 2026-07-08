@@ -427,6 +427,7 @@ export class Dashboard {
                   <th>来源</th>
                   <th>模型</th>
                   <th>输入</th>
+                  <th>缓存命中</th>
                   <th>输出</th>
                   <th>总计</th>
                   <th>费用</th>
@@ -624,6 +625,7 @@ export class Dashboard {
         <td>${esc(r.source)}</td>
         <td>${esc(r.model)}</td>
         <td>${r.inputTokens.toLocaleString()}</td>
+        <td>${r.cacheReadTokens ? r.cacheReadTokens.toLocaleString() : "—"}</td>
         <td>${r.outputTokens.toLocaleString()}</td>
         <td><strong>${r.totalTokens.toLocaleString()}</strong></td>
         <td>${this.store.hasAnyPrice() ? this.store.formatCost(this.store.getRecordCost(r)) : "—"}</td>
@@ -719,7 +721,7 @@ export class Dashboard {
     }
     lines.push(`# 记录数,${records.length}`);
     // 表头
-    lines.push(["时间", "模型", "输入Token", "输出Token", "总计Token", "费用", "Key名称", "耗时(ms)", "成功"].join(","));
+    lines.push(["时间", "模型", "输入Token", "缓存命中Token", "输出Token", "总计Token", "费用", "Key名称", "耗时(ms)", "成功"].join(","));
     // 数据行
     for (const r of records) {
       const d = new Date(r.timestamp);
@@ -729,6 +731,7 @@ export class Dashboard {
         time,
         r.model,
         r.inputTokens,
+        r.cacheReadTokens ?? "",
         r.outputTokens,
         r.totalTokens,
         cur + this.store.getRecordCost(r).toFixed(4),

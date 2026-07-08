@@ -627,10 +627,11 @@ export class SettingsPanel {
     if (!container) return;
     const recalc = this.store.getSettings().recalcCostOnPriceChange !== false;
 
-    const makeRow = (model: string, input: number, output: number): string => `
+    const makeRow = (model: string, input: number, output: number, cacheRead?: number): string => `
       <div class="tks-price-row">
         <input type="text" class="b3-text-field tks-price-model" value="${esc(model)}" placeholder="模型名（如 gpt-4o）" />
         <input type="number" step="0.0001" min="0" class="b3-text-field tks-price-input" value="${esc(String(input))}" placeholder="输入/1K" />
+        <input type="number" step="0.0001" min="0" class="b3-text-field tks-price-cache" value="${esc(String(cacheRead ?? 0))}" placeholder="缓存命中/1K" />
         <input type="number" step="0.0001" min="0" class="b3-text-field tks-price-output" value="${esc(String(output))}" placeholder="输出/1K" />
         <button class="b3-button b3-button--small b3-button--danger tks-price-del" title="删除">✕</button>
       </div>
@@ -651,6 +652,7 @@ export class SettingsPanel {
         <input type="text" class="b3-text-field tks-pack-name" value="${esc(pack.name)}" placeholder="资源包名（如 通义千问）" />
         <input type="number" step="1" min="0" class="b3-text-field tks-pack-total" value="${esc(String(pack.totalTokens || 0))}" placeholder="总 Tokens（0 不限）" />
         <input type="number" step="0.0001" min="0" class="b3-text-field tks-pack-input" value="${esc(String(pack.input))}" placeholder="输入单价/1K" />
+        <input type="number" step="0.0001" min="0" class="b3-text-field tks-pack-cache" value="${esc(String(pack.cacheRead ?? 0))}" placeholder="缓存命中单价/1K" />
         <input type="number" step="0.0001" min="0" class="b3-text-field tks-pack-output" value="${esc(String(pack.output))}" placeholder="输出单价/1K" />
         <input type="text" class="b3-text-field tks-pack-models" value="${esc((pack.models || []).join(", "))}" placeholder="涵盖模型，逗号分隔" />
         <button class="b3-button b3-button--small b3-button--danger tks-pack-del" title="删除">✕</button>
@@ -660,7 +662,7 @@ export class SettingsPanel {
     };
 
     const initialRows = Object.entries(prices)
-      .map(([m, p]) => makeRow(m, p.input, p.output))
+      .map(([m, p]) => makeRow(m, p.input, p.output, p.cacheRead))
       .join("");
 
     const initialPacks = packs.map((p) => makePackRow(p)).join("");
@@ -681,6 +683,7 @@ export class SettingsPanel {
       <div class="tks-price-header">
         <span class="tks-price-hd-model">模型名称</span>
         <span class="tks-price-hd-input">输入/1K</span>
+        <span class="tks-price-hd-cache">缓存命中/1K</span>
         <span class="tks-price-hd-output">输出/1K</span>
         <span></span>
       </div>
@@ -694,6 +697,7 @@ export class SettingsPanel {
         <span class="tks-pack-hd-name">名称</span>
         <span class="tks-pack-hd-total">总 Tokens</span>
         <span class="tks-pack-hd-input">输入/1K</span>
+        <span class="tks-pack-hd-cache">缓存命中/1K</span>
         <span class="tks-pack-hd-output">输出/1K</span>
         <span class="tks-pack-hd-models">涵盖模型</span>
         <span></span>
@@ -725,7 +729,7 @@ export class SettingsPanel {
     container.querySelector("#tks-price-add")?.addEventListener("click", () => {
       const empty = listEl.querySelector(".tks-price-empty");
       if (empty) empty.remove();
-      listEl.insertAdjacentHTML("beforeend", makeRow("", 0, 0));
+      listEl.insertAdjacentHTML("beforeend", makeRow("", 0, 0, 0));
       bindRow(listEl.lastElementChild as HTMLElement);
     });
 
@@ -761,8 +765,9 @@ export class SettingsPanel {
         const model = ((row.querySelector(".tks-price-model") as HTMLInputElement)?.value || "")
           .toLowerCase().trim().replace(/[\s\-_]+/g, "");
         const input = parseFloat((row.querySelector(".tks-price-input") as HTMLInputElement)?.value || "0") || 0;
+        const cacheRead = parseFloat((row.querySelector(".tks-price-cache") as HTMLInputElement)?.value || "0") || 0;
         const output = parseFloat((row.querySelector(".tks-price-output") as HTMLInputElement)?.value || "0") || 0;
-        if (model) finalPrices[model] = { input, output };
+        if (model) finalPrices[model] = { input, output, ...(cacheRead > 0 ? { cacheRead } : {}) };
       });
       const finalPacks: PricePack[] = [];
       packListEl.querySelectorAll(".tks-pack-row").forEach((row) => {
@@ -770,13 +775,14 @@ export class SettingsPanel {
         const name = ((row.querySelector(".tks-pack-name") as HTMLInputElement)?.value || "").trim();
         const totalTokens = parseInt((row.querySelector(".tks-pack-total") as HTMLInputElement)?.value || "0", 10) || 0;
         const input = parseFloat((row.querySelector(".tks-pack-input") as HTMLInputElement)?.value || "0") || 0;
+        const cacheRead = parseFloat((row.querySelector(".tks-pack-cache") as HTMLInputElement)?.value || "0") || 0;
         const output = parseFloat((row.querySelector(".tks-pack-output") as HTMLInputElement)?.value || "0") || 0;
         const models = ((row.querySelector(".tks-pack-models") as HTMLInputElement)?.value || "")
           .split(/[,，]/)
           .map((x) => x.toLowerCase().trim().replace(/[\s\-_]+/g, ""))
           .filter(Boolean);
         if (name || models.length > 0) {
-          finalPacks.push({ id, name, totalTokens, input, output, models });
+          finalPacks.push({ id, name, totalTokens, input, output, ...(cacheRead > 0 ? { cacheRead } : {}), models });
         }
       });
       const cur = (container.querySelector("#tks-price-currency") as HTMLSelectElement)?.value || "¥";

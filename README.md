@@ -228,6 +228,11 @@ CJK 标点      ≈ 0.5 token/字
 
 ## 更新日志
 
+### v1.4.8
+- **新增（缓存命中 token 单价）** 模型单价和资源包均新增「缓存命中/1K」价格字段，支持 DeepSeek / OpenAI 等供应商的 `cached_input_tokens`、`cache_read_input_tokens` 三段式计费（缓存命中 < 输入 < 输出）。未配置时费用按原逻辑计算（仅输入+输出），向后兼容旧数据
+- **新增（拦截器提取）** 从 API 响应的 `usage.cached_input_tokens`、`usage.cache_read_input_tokens`、`usage.prompt_tokens_details.cached_tokens` 等字段自动提取缓存命中 token 数量，记录到 `cacheReadTokens` 字段；流式（SSE/NDJSON）与非流式响应均已覆盖
+- **新增（仪表盘展示）** 调用记录表新增「缓存命中」列（无数据时显示 —）；CSV 导出同步增加该列；「费用估算配置」弹窗模型单价表与资源包表均加第三列输入框
+
 ### v1.4.7
 - **修复（数据丢失）** 持久化备份原先写入插件安装目录 `data/plugins/siyuan-token-stats/settings.json`，该目录在插件更新时会被清空、且可能与思源自身插件设置冲突，导致升级后数据与设置丢失。现改为写入用户数据目录 `data/storage/siyuan-token-stats/data.backup.json`（随更新保留、随云同步）。同时放宽加载逻辑：`load()` 不再强要求 `lastSavedAt`，旧版本（未写入该字段）的数据文件也能被恢复；并新增对旧安装目录的只读迁移源，升级后若旧数据仍在将自动合并回来
 - **修复（全局周期无自定义入口）** 全局 Token 限额、全局费用限额两个重置周期此前虽有「自定义（天）」选项却没有填写入口。现于这两个周期下拉紧下方各增加「自定义周期天数（天）」输入框，与单 Key 周期共用同一天数，任一框改动同步到另外两框
