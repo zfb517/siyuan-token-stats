@@ -335,6 +335,10 @@ export class Dashboard {
 
     return `
       <div class="tks-dashboard">
+        <div class="tks-readme-hint" id="tks-readme-hint">
+          <span class="tks-readme-icon">📖</span>
+          <span class="tks-readme-text">使用前请仔细阅读 README，特别是「统计精度与免责声明」章节：本插件为本地估算参考工具，<b>单价 / 资源包配置错误会显著放大费用估算误差</b>，所有统计与费用请以 API 服务商官方账单为准。</span>
+        </div>
         ${settings.showDisclaimer !== false && !this.disclaimerDismissed ? `
         <div class="tks-disclaimer-banner" id="tks-disclaimer">
           <span class="tks-disclaimer-icon">⚠️</span>

@@ -315,7 +315,7 @@ export class SettingsPanel {
     // ─── 费用估算配置 ───
     setting.addItem({
       title: "费用估算配置",
-      description: "设置每模型单价（每 1K tokens 的输入/输出价格）与资源包（一个包涵盖多个模型），仪表盘将显示估算费用",
+      description: "设置每模型单价（每 1K tokens 的输入/输出价格）与资源包（一个包涵盖多个模型），仪表盘将显示估算费用。注意：费用估算完全依赖此处配置，单价 / 资源包填错会显著放大费用误差，请以 API 服务商账单为准；使用前请先阅读 README「统计精度与免责声明」章节",
       actionElement: this.createButton("配置", () => this.openPriceEditor()),
     });
 
@@ -688,6 +688,9 @@ export class SettingsPanel {
     const initialPacks = packs.map((p) => makePackRow(p)).join("");
 
     container.innerHTML = `
+      <div class="tks-price-warning">
+        ⚠️ 费用估算完全依赖下方单价与资源包配置。<b>填错单价（数量级）、模型名与请求实际模型不匹配、或资源包计价模式选错，都会直接放大费用估算误差</b>。本插件数据为估算参考，请以 API 服务商官方账单为准；使用前请阅读 README「统计精度与免责声明」章节。
+      </div>
       <div class="tks-price-head">
         <label>货币类型</label>
         <select id="tks-price-currency" class="b3-select fn__size200">
