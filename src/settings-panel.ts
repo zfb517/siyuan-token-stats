@@ -6,6 +6,7 @@ import { Setting, Dialog, showMessage, confirm, getFrontend } from "siyuan";
 import type { Store } from "./store";
 import type { KeyManager } from "./key-manager";
 import type { ApiKeyConfig, QuotaResetCycle, ModelPrice, PricePack } from "./types";
+import { sha256Sync } from "./crypto";
 
 /** 转义 HTML 特殊字符，防止 XSS */
 function esc(str: string): string {
@@ -1002,8 +1003,8 @@ export class SettingsPanel {
           </div>
           <div class="tks-form-row">
             <label>API Key</label>
-            <input type="password" id="tke-key" class="b3-text-field" value="${esc(key?.keyFull || "")}" placeholder="sk-..." />
-            <div class="tks-form-hint">用于匹配请求头中的 Authorization / x-api-key，留空则仅按 URL 匹配</div>
+            <input type="password" id="tke-key" class="b3-text-field" value="" placeholder="sk-..." />
+            <div class="tks-form-hint">用于匹配请求头中的 Authorization / x-api-key；编辑时留空则保留现有密钥，仅按 URL 匹配时可不填</div>
           </div>
           <div class="tks-form-row">
             <label>提供商名称</label>
@@ -1110,10 +1111,8 @@ export class SettingsPanel {
       }
 
       if (isEdit && key) {
-        this.store.updateApiKey(key.id, {
+        const updates: Partial<ApiKeyConfig> = {
           name,
-          keyFull: apiKey,
-          keyMasked: this.keyManager.maskKey(apiKey),
           provider,
           baseUrl,
           models,
@@ -1123,7 +1122,13 @@ export class SettingsPanel {
           usedInputTokensOffset,
           usedOutputTokensOffset,
           enabled,
-        });
+        };
+        // 仅当填写了新密钥时才更新（留空则保留既有哈希，不覆盖）
+        if (apiKey) {
+          updates.keyFull = apiKey;
+          updates.keyMasked = this.keyManager.maskKey(apiKey);
+        }
+        this.store.updateApiKey(key.id, updates);
         this.keyManager.resetAlert(key.id);
       } else {
         const newKey: ApiKeyConfig = {
@@ -1154,7 +1159,11 @@ export class SettingsPanel {
 
   /** 导出 API Key 列表为 JSON 文件 */
   private exportKeys(): void {
-    const keys = this.store.getApiKeys();
+    // 导出时仅保留单向哈希，不携带明文密钥
+    const keys = this.store.getApiKeys().map((k) => {
+      const { keyFull, ...rest } = k;
+      return rest;
+    });
     const payload = JSON.stringify(
       { version: "1.3.0", exportedAt: Date.now(), apiKeys: keys },
       null,
@@ -1194,16 +1203,20 @@ export class SettingsPanel {
         let added = 0;
         let updated = 0;
         for (const k of keys) {
-          if (!k || !k.keyFull) continue;
+          if (!k || (!k.keyFull && !k.keyHash)) continue;
           const models = Array.isArray(k.models)
             ? k.models
             : typeof k.models === "string"
               ? k.models.split(/[,，]/).map((x: string) => x.trim()).filter(Boolean)
               : [];
 
-          const existing = this.store.getApiKeys().find((d) => d.keyFull === k.keyFull);
+          // 按单向哈希去重（兼容仅含 keyHash 的导出文件）
+          const incomingHash = k.keyHash || (k.keyFull ? sha256Sync(k.keyFull) : "");
+          const existing = incomingHash
+            ? this.store.getApiKeys().find((d) => d.keyHash === incomingHash)
+            : undefined;
           if (existing) {
-            this.store.updateApiKey(existing.id, {
+            const updates: Partial<ApiKeyConfig> = {
               name: k.name || existing.name,
               provider: k.provider || existing.provider,
               baseUrl: k.baseUrl || existing.baseUrl,
@@ -1211,14 +1224,21 @@ export class SettingsPanel {
               quotaLimit: k.quotaLimit ?? existing.quotaLimit,
               alertThreshold: k.alertThreshold ?? existing.alertThreshold,
               enabled: k.enabled ?? existing.enabled,
-            });
+            };
+            // 导入文件若携带明文密钥，则一并更新哈希
+            if (k.keyFull) {
+              updates.keyFull = k.keyFull;
+              updates.keyMasked = this.keyManager.maskKey(k.keyFull);
+            }
+            this.store.updateApiKey(existing.id, updates);
             updated++;
           } else {
             this.store.addApiKey({
               id: this.keyManager.generateKeyId(),
               name: k.name || "Imported Key",
-              keyFull: k.keyFull,
-              keyMasked: this.keyManager.maskKey(k.keyFull),
+              keyFull: k.keyFull || "",
+              keyHash: k.keyHash || "",
+              keyMasked: k.keyMasked || this.keyManager.maskKey(k.keyFull || "Imported"),
               provider: k.provider || "",
               baseUrl: k.baseUrl || "",
               models,

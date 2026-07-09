@@ -39,8 +39,10 @@ export interface PricePack {
 export interface ApiKeyConfig {
   id: string;
   name: string;
-  /** 完整密钥，用于匹配拦截到的请求（本地存储，不上传） */
-  keyFull: string;
+  /** 完整密钥：仅在用户录入时用于派生下面的 keyHash，录入后即刻丢弃，不进入持久化层、不随云同步或导出传输 */
+  keyFull?: string;
+  /** 完整密钥的单向 SHA-256 摘要，用于匹配拦截到的请求。只存摘要、不可逆，即使数据文件外泄也无法还原明文密钥 */
+  keyHash?: string;
   /** 脱敏显示用 */
   keyMasked: string;
   /** 提供商名称，用户可自定义（如 OpenAI、DeepSeek、SiliconFlow、华为云等） */

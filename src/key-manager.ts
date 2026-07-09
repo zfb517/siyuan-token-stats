@@ -4,6 +4,7 @@
  */
 import type { Store } from "./store";
 import type { ApiKeyConfig, PluginSettings, QuotaResetCycle } from "./types";
+import { sha256Sync } from "./crypto";
 
 /** 提取 URL 的路径部分用于匹配（兼容相对路径和绝对路径） */
 function normalizeUrlPath(url: string): string {
@@ -32,11 +33,12 @@ export class KeyManager {
     return this.store.getApiKeys();
   }
 
-  /** 根据实际 API Key 字符串查找匹配的配置 */
+  /** 根据实际 API Key 字符串查找匹配的配置（以单向哈希比对，不在内存中保留明文） */
   findByKey(apiKey: string): ApiKeyConfig | undefined {
     if (!apiKey) return undefined;
+    const h = sha256Sync(apiKey);
     return this.store.getApiKeys().find(
-      (k) => k.enabled && k.keyFull && k.keyFull === apiKey
+      (k) => k.enabled && k.keyHash && k.keyHash === h
     );
   }
 

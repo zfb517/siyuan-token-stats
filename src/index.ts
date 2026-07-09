@@ -69,7 +69,7 @@ export default class TokenStatsPlugin extends Plugin {
     this.interceptor.setThresholdCallback((_apiKeyId, message) => {
       const settings = this.store.getSettings();
       if (settings.showNotifications) {
-        showMessage(message, 5000, "error");
+        showMessage(message, 5000, "info");
       }
     });
 
@@ -156,12 +156,12 @@ export default class TokenStatsPlugin extends Plugin {
     // 卸载拦截器
     this.interceptor?.uninstall();
 
-    // 保存数据：按可靠性从高到低依次执行
+    // 保存数据：先同步镜像，再尽力异步落盘
     //   1. saveToLocalStorage() —— 同步、不依赖网络，必定完成
-    //   2. saveSync() —— 同步 XHR 写文件（E + F）
+    //   2. saveSync() —— sendBeacon 尽力异步写文件（不阻塞主线程）
     //   3. save() —— 异步写文件（兜底）
     this.store?.saveToLocalStorage();     // 最优先：同步 localStorage
-    this.store?.saveSync();              // 其次：同步 XHR 文件
+    this.store?.saveSync();              // 其次：sendBeacon 异步文件
     this.store?.save().catch((e) => console.error("[TokenStats] Save on unload failed:", e));
 
     // 移除样式
@@ -325,7 +325,7 @@ export default class TokenStatsPlugin extends Plugin {
   private checkThresholdsLive(): void {
     const settings = this.store.getSettings();
     if (!settings.showNotifications) return;
-    this.keyManager.checkAllThresholds((msg) => showMessage(msg, 5000, "error"));
+    this.keyManager.checkAllThresholds((msg) => showMessage(msg, 5000, "info"));
   }
 
   /** 紧凑显示 token 数量（如 1.2k / 3.4M） */

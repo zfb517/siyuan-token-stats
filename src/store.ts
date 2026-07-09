@@ -3,6 +3,7 @@
  * 使用思源的文件 API 将数据存储在 data/storage/siyuan-token-stats/ 下。
  */
 import type { PluginData, TokenRecord, ApiKeyConfig, PluginSettings, ModelPrice, PricePack } from "./types";
+import { sha256Sync } from "./crypto";
 
 // 主存储与自有备份：使用 SiYuan 官方 Plugin.loadData/saveData API 读写，
 // 实际落盘于 data/storage/siyuan-token-stats/ 下，随插件更新保留、随云同步，
@@ -70,6 +71,20 @@ export class Store {
       records: [],
       settings: { ...DEFAULT_SETTINGS },
     };
+  }
+
+  /**
+   * 密钥安全处理：由明文 keyFull 派生单向哈希 keyHash，并立即丢弃明文，
+   * 使明文密钥永不进入持久化层、不随云同步或导出传输。
+   * 幂等：若已无明文（keyFull 为空），则保留既有 keyHash 不变。
+   */
+  private sanitizeKey(k: ApiKeyConfig): ApiKeyConfig {
+    const out: ApiKeyConfig = { ...k };
+    if (typeof out.keyFull === "string" && out.keyFull.length > 0) {
+      out.keyHash = sha256Sync(out.keyFull);
+      out.keyFull = "";
+    }
+    return out;
   }
 
   /**
@@ -238,7 +253,7 @@ export class Store {
         }
         const existTs = (exist as any).keysUpdatedAt || 0;
         const newTs = (k as any).keysUpdatedAt || 0;
-        if (newTs > existTs || (newTs === existTs && (!exist.keyFull && k.keyFull))) {
+        if (newTs > existTs || (newTs === existTs && (!exist.keyHash && k.keyHash))) {
           keyMap.set(k.id, k);
         }
       };
@@ -304,7 +319,7 @@ export class Store {
           if (migrated.usedInputTokensOffset === undefined) migrated.usedInputTokensOffset = 0;
           if (migrated.usedOutputTokensOffset === undefined) migrated.usedOutputTokensOffset = 0;
           if (!Array.isArray(migrated.models)) migrated.models = [];
-          return migrated;
+          return this.sanitizeKey(migrated);
         })
         .filter((k) => !deletedSet.has(k.id));
 
@@ -347,8 +362,6 @@ export class Store {
       console.warn("[TokenStats] scheduleSave ignored: data not loaded yet.");
       return;
     }
-    // 每次变更都立即写 localStorage 镜像（兜底）
-    this.saveToLocalStorage();
     if (this.saveTimer) clearTimeout(this.saveTimer);
     this.saveTimer = setTimeout(() => {
       this.save(force).catch((e) => console.error("[TokenStats] Save failed:", e));
@@ -423,8 +436,25 @@ export class Store {
     }
   }
 
-  /** 同步保存：在插件卸载前强制落盘（同步 XHR 兜底 + localStorage 镜像）。
-   *  未加载完成前直接跳过；仅在确有数据或曾成功保存过时写文件，避免清空已有文件。 */
+  /** 尽力异步落盘（不阻塞卸载主线程）：优先用 navigator.sendBeacon 把数据 POST 到内核文件接口。
+   *  sendBeacon 为浏览器在页面卸载时保证送达的机制，非阻塞；不可用时静默跳过，
+   *  因为正常会话中数据已由防抖 save() 落盘，saveSync 只是最后一道尽力兜底。 */
+  private beaconPutFile(path: string, payload: string): void {
+    try {
+      if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
+        const form = new FormData();
+        form.append("path", path);
+        form.append("file", new Blob([payload], { type: "application/json" }));
+        navigator.sendBeacon("/api/file/putFile", form);
+      }
+    } catch {
+      // 尽力而为，失败不影响已落盘的数据
+    }
+  }
+
+  /** 同步保存：在插件卸载前尽力落盘（sendBeacon 异步兜底 + localStorage 同步镜像）。
+   *  未加载完成前直接跳过；仅在确有数据或曾成功保存过时写文件，避免清空已有文件。
+   *  不再使用同步 XMLHttpRequest，以免阻塞卸载主线程。 */
   saveSync(): void {
     if (!this.loaded) {
       console.warn("[TokenStats] saveSync() ignored: data not loaded yet.");
@@ -452,31 +482,11 @@ export class Store {
         return;
       }
 
-      // 写主存储 E（同步 XHR）
-      try {
-        const xhrE = new XMLHttpRequest();
-        xhrE.open("POST", "/api/file/putFile", false);
-        const formE = new FormData();
-        formE.append("path", STORAGE_PATH);
-        formE.append("file", new Blob([payload], { type: "application/json" }));
-        xhrE.send(formE);
-      } catch {
-        // E 写入失败，继续写 F
-      }
+      // 尽力异步落盘（不阻塞主线程）：主存储 + 自有备份
+      this.beaconPutFile(STORAGE_PATH, payload);
+      this.beaconPutFile(BACKUP_PATH, payload);
 
-      // 写自有备份 F（data/storage 用户数据目录）
-      try {
-        const xhrF = new XMLHttpRequest();
-        xhrF.open("POST", "/api/file/putFile", false);
-        const formF = new FormData();
-        formF.append("path", BACKUP_PATH);
-        formF.append("file", new Blob([payload], { type: "application/json" }));
-        xhrF.send(formF);
-      } catch {
-        // F 写入失败
-      }
-
-      console.log("[TokenStats] Synchronous save completed (localStorage + E + F).");
+      console.log("[TokenStats] Synchronous save completed (localStorage mirror + sendBeacon file flush).");
     } catch (e) {
       console.error("[TokenStats] saveSync error:", e);
     }
@@ -579,9 +589,9 @@ export class Store {
       const remoteDeleted = (remote as any).deletedKeys || [];
       const localDeleted = local.deletedKeys || [];
       const mergedDeleted = Array.from(new Set([...localDeleted, ...remoteDeleted]));
-      const mergedKeys = Array.from(keyMap.values()).filter(
-        (k) => !mergedDeleted.includes(k.id)
-      );
+      const mergedKeys = Array.from(keyMap.values())
+        .filter((k) => !mergedDeleted.includes(k.id))
+        .map((k) => this.sanitizeKey(k));
 
       // ── 合并 Settings：按 settingsUpdatedAt 取较新方 ──
       const localSettingsNewer = localSettingsUpdatedAt >= remoteSettingsUpdatedAt;
@@ -634,7 +644,8 @@ export class Store {
     // 若添加的是之前被删除的 Key（同 id），从墓碑列表移除，允许恢复
     if (!this.data.deletedKeys) this.data.deletedKeys = [];
     this.data.deletedKeys = this.data.deletedKeys.filter((id) => id !== key.id);
-    this.data.apiKeys.push(key);
+    // 录入后即刻派生哈希并丢弃明文
+    this.data.apiKeys.push(this.sanitizeKey(key));
     this.data.keysUpdatedAt = Date.now();
     this.scheduleSave();
   }
@@ -642,7 +653,13 @@ export class Store {
   updateApiKey(id: string, updates: Partial<ApiKeyConfig>): void {
     const idx = this.data.apiKeys.findIndex((k) => k.id === id);
     if (idx >= 0) {
-      this.data.apiKeys[idx] = { ...this.data.apiKeys[idx], ...updates };
+      const merged = { ...this.data.apiKeys[idx], ...updates };
+      // 仅当用户显式提供了非空明文密钥时才重新派生哈希（留空则保留既有哈希）
+      if (typeof updates.keyFull === "string" && updates.keyFull.length > 0) {
+        merged.keyHash = sha256Sync(updates.keyFull);
+        merged.keyFull = "";
+      }
+      this.data.apiKeys[idx] = merged;
       this.data.keysUpdatedAt = Date.now();
       this.scheduleSave();
     }
@@ -846,7 +863,14 @@ export class Store {
   // ─── Export ───
 
   exportAll(): string {
-    return JSON.stringify(this.data, null, 2);
+    // 导出时剥离明文密钥，仅保留单向哈希（不可逆，无法还原明文）
+    const clone: any = JSON.parse(JSON.stringify(this.data));
+    if (Array.isArray(clone.apiKeys)) {
+      for (const k of clone.apiKeys) {
+        if (k && "keyFull" in k) delete k.keyFull;
+      }
+    }
+    return JSON.stringify(clone, null, 2);
   }
 
   exportRecords(): string {
