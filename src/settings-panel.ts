@@ -137,6 +137,22 @@ export class SettingsPanel {
       },
     });
 
+    setting.addItem({
+      title: "诊断日志导出条数",
+      description: "仪表盘「导出原始 usage 日志」时，最多导出最近 N 条带原始 usage 的记录（0 = 全部导出）。原始 usage 来自 API 供应商响应、未做任何裁剪，用于排查用量统计偏差。",
+      createActionElement: () => {
+        const input = document.createElement("input");
+        input.type = "number";
+        input.className = "b3-text-field fn__size200";
+        input.id = "tks-diagnosticExportCount";
+        input.value = String(s.diagnosticExportCount ?? 50);
+        input.min = "0";
+        input.max = "500";
+        input.step = "10";
+        return input;
+      },
+    });
+
     // ─── 全局总 Token 限额 ───
     setting.addItem({
       title: "全局总 Token 限额",
@@ -391,6 +407,91 @@ export class SettingsPanel {
       actionElement: this.createButton("重置", () => this.resetAll()),
     });
 
+    // ─── 数据洞察（L2 护城河）───
+    setting.addItem({
+      title: "显示高级数据洞察",
+      description: "总开关：关闭后仪表盘回归简洁核心视图，隐藏月末预测 / 异常检测 / 优化建议 / 笔记归因。需要时再打开。",
+      createActionElement: () => this.createCheckbox("showAdvancedDashboard", s.showAdvancedDashboard !== false),
+    });
+    setting.addItem({
+      title: "月末预测",
+      description: "仪表盘展示「预计月末费用 / Token」及与全局限额的进度对比",
+      createActionElement: () => this.createCheckbox("enableForecast", s.enableForecast !== false),
+    });
+    setting.addItem({
+      title: "预测方法",
+      description: "线性外推=按已用日均推算；最近趋势=按最近 N 日均值推算（更贴合近期变化）",
+      createActionElement: () => {
+        const select = document.createElement("select");
+        select.className = "b3-select fn__size200";
+        select.id = "tks-forecastMethod";
+        const options: { value: string; label: string }[] = [
+          { value: "recentTrend", label: "最近趋势（默认）" },
+          { value: "linear", label: "线性外推" },
+        ];
+        for (const opt of options) {
+          const el = document.createElement("option");
+          el.value = opt.value;
+          el.textContent = opt.label;
+          if ((s.forecastMethod || "recentTrend") === opt.value) el.selected = true;
+          select.appendChild(el);
+        }
+        return select;
+      },
+    });
+    setting.addItem({
+      title: "趋势窗口天数",
+      description: "「最近趋势」方法使用的回溯天数（默认 7）",
+      createActionElement: () => this.createNumberInput("forecastWindowDays", s.forecastWindowDays || 7, 1, 90, 1),
+    });
+    setting.addItem({
+      title: "异常检测",
+      description: "仪表盘列出用量离群日（Token / 费用 / 请求数突增）",
+      createActionElement: () => this.createCheckbox("enableAnomaly", s.enableAnomaly !== false),
+    });
+    setting.addItem({
+      title: "异常敏感度",
+      description: "标准差倍数阈值，越大越宽松（默认 2.5，即超过均值 2.5 个标准差才报警）",
+      createActionElement: () => this.createNumberInput("anomalySensitivity", s.anomalySensitivity || 2.5, 1.5, 6, 0.1),
+    });
+    setting.addItem({
+      title: "异常回溯天数",
+      description: "异常检测统计的回溯窗口（默认 30 天，至少 3 天）",
+      createActionElement: () => this.createNumberInput("anomalyLookbackDays", s.anomalyLookbackDays || 30, 3, 365, 1),
+    });
+    setting.addItem({
+      title: "优化建议",
+      description: "仪表盘基于数据给出降本 / 提效建议（缓存命中率、估算占比、高价模型、用量集中等）",
+      createActionElement: () => this.createCheckbox("enableSuggestions", s.enableSuggestions !== false),
+    });
+    setting.addItem({
+      title: "笔记归因",
+      description: "在高级视图中展示「按文档 Token 消耗」排行。数据采集始终后台进行（零额外成本），此开关仅控制是否显示面板。",
+      createActionElement: () => this.createCheckbox("enableNoteAttribution", s.enableNoteAttribution !== false),
+    });
+    setting.addItem({
+      title: "归因显示条数",
+      description: "笔记归因排行展示 Top N 条（默认 10，替换原硬编码上限 10）",
+      createActionElement: () => this.createNumberInput("attributionTopN", s.attributionTopN || 10, 1, 50, 1),
+    });
+    setting.addItem({
+      title: "Token 数字格式",
+      description: "仪表盘大数字显示方式：auto=自动用「万/亿」后缀（推荐，紧凑）；full=始终显示完整数字",
+      createActionElement: () => {
+        const sel = document.createElement("select");
+        sel.id = "tks-tokenDisplayUnit";
+        sel.className = "b3-select";
+        ["auto", "full"].forEach((v) => {
+          const opt = document.createElement("option");
+          opt.value = v;
+          opt.textContent = v === "auto" ? "自动（万/亿）" : "完整数字";
+          if ((s.tokenDisplayUnit || "auto") === v) opt.selected = true;
+          sel.appendChild(opt);
+        });
+        return sel;
+      },
+    });
+
     return setting;
   }
 
@@ -434,6 +535,18 @@ export class SettingsPanel {
         if (el && el.value !== v) el.value = v;
       }
     });
+    return input;
+  }
+
+  private createNumberInput(id: string, value: number, min?: number, max?: number, step = 1): HTMLInputElement {
+    const input = document.createElement("input");
+    input.type = "number";
+    input.className = "b3-text-field fn__size200";
+    input.id = `tks-${id}`;
+    input.value = String(value);
+    if (min !== undefined) input.min = String(min);
+    if (max !== undefined) input.max = String(max);
+    input.step = String(step);
     return input;
   }
 
@@ -499,6 +612,19 @@ export class SettingsPanel {
       parseFloat((document.getElementById("tks-globalUsedCostOffset") as HTMLInputElement)?.value || "0") || 0
     );
     const customResetDays = Math.max(1, getNum("customResetDays"));
+    const diagnosticExportCount = Math.max(0, getNum("diagnosticExportCount"));
+
+    const enableForecast = get("enableForecast");
+    const forecastMethod = (document.getElementById("tks-forecastMethod") as HTMLSelectElement)?.value || "recentTrend";
+    const forecastWindowDays = Math.max(1, getNum("forecastWindowDays"));
+    const enableAnomaly = get("enableAnomaly");
+    const anomalySensitivity = Math.max(1.5, parseFloat((document.getElementById("tks-anomalySensitivity") as HTMLInputElement)?.value || "2.5") || 2.5);
+    const anomalyLookbackDays = Math.max(3, getNum("anomalyLookbackDays"));
+    const enableSuggestions = get("enableSuggestions");
+    const showAdvancedDashboard = get("showAdvancedDashboard");
+    const enableNoteAttribution = get("enableNoteAttribution");
+    const attributionTopN = Math.max(1, getNum("attributionTopN"));
+    const tokenDisplayUnit = (document.querySelector("#tks-tokenDisplayUnit") as HTMLSelectElement)?.value || "auto";
 
     const shouldResetGlobalAlert =
       globalQuotaLimit !== this.store.getSettings().globalQuotaLimit ||
@@ -528,6 +654,18 @@ export class SettingsPanel {
       syncStatistics: get("syncStatistics"),
       showDisclaimer: get("showDisclaimer"),
       dashboardSplitExactEstimate: get("dashboardSplitExactEstimate"),
+      diagnosticExportCount,
+      enableForecast,
+      forecastMethod: forecastMethod as "linear" | "recentTrend",
+      forecastWindowDays,
+      enableAnomaly,
+      anomalySensitivity,
+      anomalyLookbackDays,
+      enableSuggestions,
+      showAdvancedDashboard,
+      enableNoteAttribution,
+      attributionTopN,
+      tokenDisplayUnit: tokenDisplayUnit as "auto" | "full",
     });
 
     if (shouldResetGlobalAlert) {
@@ -587,6 +725,19 @@ export class SettingsPanel {
     setVal("customResetDays", s.customResetDays);
     setVal("globalQuotaResetDays", s.customResetDays);
     setVal("globalCostResetDays", s.customResetDays);
+    setVal("diagnosticExportCount", s.diagnosticExportCount ?? 50);
+    setCheck("enableForecast", s.enableForecast !== false);
+    setVal("forecastMethod", s.forecastMethod || "recentTrend");
+    setVal("forecastWindowDays", s.forecastWindowDays || 7);
+    setCheck("enableAnomaly", s.enableAnomaly !== false);
+    setVal("anomalySensitivity", s.anomalySensitivity || 2.5);
+    setVal("anomalyLookbackDays", s.anomalyLookbackDays || 30);
+    setCheck("enableSuggestions", s.enableSuggestions !== false);
+    setCheck("showAdvancedDashboard", s.showAdvancedDashboard !== false);
+    setCheck("enableNoteAttribution", s.enableNoteAttribution !== false);
+    setVal("attributionTopN", s.attributionTopN || 10);
+    const tduSel = document.getElementById("tks-tokenDisplayUnit") as HTMLSelectElement | null;
+    if (tduSel) tduSel.value = s.tokenDisplayUnit || "auto";
     if (!(isEditing && active!.id === "tks-quotaResetCycle")) {
       const cyc = document.getElementById("tks-quotaResetCycle") as HTMLSelectElement | null;
       if (cyc) cyc.value = s.quotaResetCycle;

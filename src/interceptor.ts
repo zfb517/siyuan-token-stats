@@ -707,6 +707,102 @@ export class Interceptor {
     return [];
   }
 
+  /**
+   * 从请求体中提取笔记归因信息（诊断/归因用）。
+   * 思源 AI 请求体里 references 的位置/字段名并不统一，这里把常见路径都扫一遍：
+   *   - body.references
+   *   - body.context?.references / blocks / refList
+   *   - body.messages[i]?.context?.references / blocks / refList
+   *   - body.contents / content / msg 上的 context
+   * 字段名兼容 id/blockId, box/notebookId, rootID/rootId/docId, hpath/path/name/title。
+   * 缺字段的请求一律返回空对象（不报错），缺失即视为未知来源。
+   */
+  private extractAttribution(parsedBody: any): {
+    notebookId?: string;
+    docId?: string;
+    docPath?: string;
+    blockIds?: string[];
+  } {
+    if (!parsedBody || typeof parsedBody !== "object") {
+      this.logDebug("attribution: parsedBody is not an object");
+      return {};
+    }
+
+    const allRefs: any[] = [];
+    const collect = (arr: any) => {
+      if (Array.isArray(arr)) allRefs.push(...arr);
+    };
+    collect(parsedBody.references);
+    collect(parsedBody.context?.references);
+    collect(parsedBody.context?.blocks);
+    collect(parsedBody.context?.refList);
+    if (Array.isArray(parsedBody.messages)) {
+      for (const m of parsedBody.messages) {
+        if (!m || typeof m !== "object") continue;
+        collect(m.context?.references);
+        collect(m.context?.blocks);
+        collect(m.context?.refList);
+      }
+    }
+    if (Array.isArray(parsedBody.contents)) {
+      for (const c of parsedBody.contents) {
+        if (!c || typeof c !== "object") continue;
+        collect(c.context?.references);
+        collect(c.context?.blocks);
+        collect(c.context?.refList);
+      }
+    }
+    if (parsedBody.content && typeof parsedBody.content === "object") {
+      collect(parsedBody.content.context?.references);
+      collect(parsedBody.content.context?.blocks);
+      collect(parsedBody.content.context?.refList);
+    }
+    if (parsedBody.msg && typeof parsedBody.msg === "object") {
+      collect(parsedBody.msg.context?.references);
+      collect(parsedBody.msg.context?.blocks);
+      collect(parsedBody.msg.context?.refList);
+    }
+
+    let notebookId: string | undefined;
+    let docId: string | undefined;
+    let docPath: string | undefined;
+    const blockIds: string[] = [];
+    for (const ref of allRefs) {
+      if (!ref || typeof ref !== "object") continue;
+      const id = ref.id || ref.blockId || ref.blockID || ref.block_id;
+      if (typeof id === "string" && id) blockIds.push(id);
+      const nb = ref.box || ref.notebookId || ref.notebook || ref.notebook_id;
+      if (notebookId === undefined && typeof nb === "string" && nb) notebookId = nb;
+      const doc = ref.rootID || ref.rootId || ref.root_id || ref.docId || ref.docID || ref.doc_id;
+      if (docId === undefined && typeof doc === "string" && doc) docId = doc;
+      const path = ref.hpath || ref.path || ref.name || ref.title || ref.hPath;
+      if (docPath === undefined && typeof path === "string" && path) docPath = path;
+    }
+    // 部分格式将来源信息放在顶层（防御性兜底）
+    if (notebookId === undefined && typeof parsedBody.box === "string" && parsedBody.box) notebookId = parsedBody.box;
+    if (docId === undefined && typeof parsedBody.rootID === "string" && parsedBody.rootID) docId = parsedBody.rootID;
+    if (docId === undefined && typeof parsedBody.rootId === "string" && parsedBody.rootId) docId = parsedBody.rootId;
+    if (docPath === undefined && typeof parsedBody.hpath === "string" && parsedBody.hpath) docPath = parsedBody.hpath;
+    if (docPath === undefined && typeof parsedBody.path === "string" && parsedBody.path) docPath = parsedBody.path;
+    if (blockIds.length === 0 && typeof parsedBody.id === "string" && parsedBody.id) blockIds.push(parsedBody.id);
+
+    const result: { notebookId?: string; docId?: string; docPath?: string; blockIds?: string[] } = {};
+    if (notebookId) result.notebookId = notebookId;
+    if (docId) result.docId = docId;
+    if (docPath) result.docPath = docPath;
+    if (blockIds.length > 0) result.blockIds = blockIds;
+
+    this.logDebug("attribution:", {
+      topRefs: Array.isArray(parsedBody.references) ? parsedBody.references.length : 0,
+      contextRefs: Array.isArray(parsedBody.context?.references) ? parsedBody.context?.references.length : 0,
+      msgRefs: Array.isArray(parsedBody.messages) ? parsedBody.messages.reduce((n: number, m: any) => n + (Array.isArray(m?.context?.references) ? m.context.references.length : 0), 0) : 0,
+      collected: allRefs.length,
+      firstRef: allRefs[0] ? JSON.stringify(allRefs[0]).slice(0, 240) : undefined,
+      result,
+    });
+    return result;
+  }
+
   /** 异步分析响应，提取或估算 token */
   private async analyzeResponse(
     response: Response,
@@ -721,6 +817,10 @@ export class Interceptor {
     let model = aiCall.model;
     // 是否为启发式估算：默认 true；当从 API 响应 usage 提取到精确 token 时置 false
     let estimated = true;
+    // 诊断模式：原始 usage 对象（来自供应商响应，未裁剪），无则为 undefined
+    let rawUsage: Record<string, unknown> | undefined;
+    // 笔记归因：从请求体 references 提取的来源信息
+    const attribution = this.extractAttribution(parsedBody);
 
     const contentType = (response.headers.get("content-type") || "").toLowerCase();
     const settings = this.store.getSettings();
@@ -762,6 +862,7 @@ export class Interceptor {
         if (result.aborted) {
           success = false;
         }
+        if (result.rawUsage) rawUsage = result.rawUsage;
       } else if (contentType.includes("application/json") || contentType.includes("text/json")) {
         // JSON 响应：先读取文本，再解析，失败时仍可估算
         const text = await response.text();
@@ -780,6 +881,7 @@ export class Interceptor {
           inputTokens = usage.inputTokens;
           outputTokens = usage.outputTokens;
           cacheReadTokens = usage.cacheReadTokens || undefined;
+          if (data?.usage) rawUsage = data.usage;
         }
         if (data?.model) {
           model = pickValidModelName(data.model, model) || model;
@@ -802,6 +904,7 @@ export class Interceptor {
         estimated = result.estimated;
         if (result.model) model = result.model;
         if (result.aborted) success = false;
+        if (result.rawUsage) rawUsage = result.rawUsage;
       } else if (contentType.includes("text/plain") || contentType.includes("text/html") || contentType.includes("application/xml") || contentType.includes("text/xml")) {
         // 文本类响应，直接估算
         const text = await response.text();
@@ -819,6 +922,7 @@ export class Interceptor {
             inputTokens = usage.inputTokens;
             outputTokens = usage.outputTokens;
             cacheReadTokens = usage.cacheReadTokens || undefined;
+            if (asJson.usage) rawUsage = asJson.usage;
           } else {
             outputTokens = this.tokenCounter.estimateFromText(this.extractOutputText(asJson));
           }
@@ -848,7 +952,7 @@ export class Interceptor {
 
     // 记录本次调用（无论 token 是否为 0，都需记录以反映真实请求量）
     const totalTokens = inputTokens + outputTokens;
-    this.recordCall(aiCall, inputTokens, outputTokens, startTime, success, model, cacheReadTokens, estimated);
+    this.recordCall(aiCall, inputTokens, outputTokens, startTime, success, model, cacheReadTokens, estimated, rawUsage, attribution);
 
     // 检查阈值（全局 + 单 Key）— 仅在有实际 token 消耗时检查，避免 0-token 请求触发误报
     if (totalTokens > 0 && settings.showNotifications) {
@@ -873,6 +977,8 @@ export class Interceptor {
     cacheReadTokens?: number;
     model?: string;
     aborted: boolean;
+    /** 诊断模式：原始 usage 对象（如有） */
+    rawUsage?: Record<string, unknown>;
     /** 是否来自启发式估算（无 usage 时为 true） */
     estimated: boolean;
   }> {
@@ -886,6 +992,7 @@ export class Interceptor {
       fullContent: "",
       usage: null as { inputTokens: number; outputTokens: number; cacheReadTokens: number } | null,
       model: undefined as string | undefined,
+      rawUsage: undefined as Record<string, unknown> | undefined,
     };
     let estimatedOutputTokens = 0;
     let aborted = false;
@@ -916,9 +1023,10 @@ export class Interceptor {
         if (typeof chunk !== "object" || chunk === null) return;
         const collected = this.collectChunkInfo(chunk, state.usage, state.model, state.fullContent, eventType);
         const prevLen = state.fullContent.length;
-        state.usage = collected.usage;
+        state.usage = this.mergeUsage(state.usage, collected.usage);
         state.model = collected.model;
         state.fullContent = collected.fullContent;
+        if (collected.rawUsage) state.rawUsage = collected.rawUsage;
         this.logDebug("SSE collected after chunk", {
           eventType,
           contentAdded: state.fullContent.length - prevLen,
@@ -1008,6 +1116,7 @@ export class Interceptor {
         cacheReadTokens: state.usage.cacheReadTokens || undefined,
         model: state.model,
         aborted,
+        rawUsage: state.rawUsage,
         estimated: false,
       };
     }
@@ -1019,6 +1128,7 @@ export class Interceptor {
       outputTokens: estimatedOutput,
       model: state.model,
       aborted,
+      rawUsage: state.rawUsage,
       estimated: true,
     };
   }
@@ -1037,6 +1147,24 @@ export class Interceptor {
   }
 
   /** 从单个 SSE/NDJSON 数据块中提取 usage / model / content，返回更新后的状态 */
+  /**
+   * 合并多次 usage 事件：逐字段取最大值。
+   * 避免后到的「仅含 completionTokens、promptTokens=0」事件把前面正确的输入清零，
+   * 也避免较小值覆盖较大值（usage 事件常为累计 / 终值）。
+   */
+  private mergeUsage(
+    existing: { inputTokens: number; outputTokens: number; cacheReadTokens: number } | null,
+    incoming: { inputTokens: number; outputTokens: number; cacheReadTokens: number } | null
+  ): { inputTokens: number; outputTokens: number; cacheReadTokens: number } | null {
+    if (!incoming) return existing;
+    if (!existing) return incoming;
+    return {
+      inputTokens: Math.max(existing.inputTokens, incoming.inputTokens),
+      outputTokens: Math.max(existing.outputTokens, incoming.outputTokens),
+      cacheReadTokens: Math.max(existing.cacheReadTokens || 0, incoming.cacheReadTokens || 0),
+    };
+  }
+
   private collectChunkInfo(
     chunk: any,
     usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number } | null,
@@ -1047,6 +1175,8 @@ export class Interceptor {
     usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number } | null;
     model: string | undefined;
     fullContent: string;
+    /** 最近一次解析到的原始 usage 对象（来自供应商响应，未裁剪），用于诊断模式导出；无则为 undefined */
+    rawUsage?: Record<string, unknown>;
   } {
     const pickModel = (...candidates: (string | null | undefined)[]) => {
       const valid = pickValidModelName(...candidates);
@@ -1055,6 +1185,9 @@ export class Interceptor {
       const current = normalizeModel(model);
       return current && !isProbablyModelId(current) ? current : "";
     };
+
+    // 原始 usage 对象（用于诊断模式导出），由各 usage 提取分支填充，最后一次覆盖
+    let rawUsage: Record<string, unknown> | undefined;
 
     if (chunk.model) {
       model = pickModel(chunk.model, model);
@@ -1081,12 +1214,18 @@ export class Interceptor {
     }
     if (eventType === "usage") {
       const promptTokens = chunk.promptTokens ?? chunk.prompt_tokens ?? 0;
+      const lastPromptTokens = chunk.lastPromptTokens ?? 0;
       const completionTokens = chunk.completionTokens ?? chunk.completion_tokens ?? 0;
-      this.logDebug("SiYuan agent usage event", { promptTokens, completionTokens, chunk });
+      this.logDebug("SiYuan agent usage event", { promptTokens, lastPromptTokens, completionTokens, chunk });
       if (promptTokens > 0 || completionTokens > 0) {
-        usage = { inputTokens: promptTokens, outputTokens: completionTokens, cacheReadTokens: chunk.cacheReadTokens ?? chunk.cachedInputTokens ?? 0 };
+        // 优先采用 lastPromptTokens（本请求真实发送量 = tokenBreakdown 之和）。
+        // 部分供应商（如 SiliconFlow）返回的 promptTokens 为累计/错误值，会夸大数十至数百倍，
+        // 仅当 lastPromptTokens 缺失或异常（> promptTokens）时回退到 promptTokens。
+        const inputTokens = lastPromptTokens > 0 && (promptTokens === 0 || lastPromptTokens <= promptTokens) ? lastPromptTokens : promptTokens;
+        usage = { inputTokens, outputTokens: completionTokens, cacheReadTokens: chunk.cachedTokens ?? chunk.cacheReadTokens ?? chunk.cachedInputTokens ?? 0 };
+        rawUsage = chunk;
       }
-      return { usage, model, fullContent };
+      return { usage, model, fullContent, rawUsage };
     }
     // event:done / event:error / event:retry / event:snapshot / event:tool_call / event:tool_result
     // 这些事件不包含内容或 token 信息，跳过
@@ -1108,6 +1247,7 @@ export class Interceptor {
         outputTokens: u.completion_tokens ?? u.output_tokens ?? u.completionTokens ?? 0,
         cacheReadTokens,
       };
+      rawUsage = chunk.usage;
     }
 
     const appendContent = (val: string | null | undefined) => {
@@ -1145,6 +1285,7 @@ export class Interceptor {
         outputTokens: u.output_tokens ?? 0,
         cacheReadTokens,
       };
+      rawUsage = chunk.message.usage;
     }
     if (chunk.content) {
       if (typeof chunk.content === "string") appendContent(chunk.content);
@@ -1183,6 +1324,7 @@ export class Interceptor {
         outputTokens: u.completion_tokens ?? u.output_tokens ?? 0,
         cacheReadTokens: u.cached_input_tokens ?? u.cache_read_input_tokens ?? 0,
       };
+      rawUsage = chunk.data.usage;
     }
     if (chunk.data?.content) {
       if (typeof chunk.data.content === "string") appendContent(chunk.data.content);
@@ -1194,7 +1336,7 @@ export class Interceptor {
     if (chunk.data?.text) appendContent(chunk.data.text);
     if (chunk.data?.result) appendContent(chunk.data.result);
 
-    return { usage, model, fullContent };
+    return { usage, model, fullContent, rawUsage };
   }
 
   /** 解析 NDJSON 流式响应 */
@@ -1209,6 +1351,8 @@ export class Interceptor {
     cacheReadTokens?: number;
     model?: string;
     aborted: boolean;
+    /** 诊断模式：原始 usage 对象（如有） */
+    rawUsage?: Record<string, unknown>;
     /** 是否来自启发式估算（无 usage 时为 true） */
     estimated: boolean;
   }> {
@@ -1221,6 +1365,7 @@ export class Interceptor {
     let usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number } | null = null;
     let model: string | undefined;
     let aborted = false;
+    let rawUsage: Record<string, unknown> | undefined;
 
     try {
       while (true) {
@@ -1234,9 +1379,10 @@ export class Interceptor {
           try {
             const chunk = JSON.parse(line);
             const collected = this.collectChunkInfo(chunk, usage, model, fullContent);
-            usage = collected.usage;
+            usage = this.mergeUsage(usage, collected.usage);
             model = collected.model;
             fullContent = collected.fullContent;
+            if (collected.rawUsage) rawUsage = collected.rawUsage;
           } catch {
             // ignore
           }
@@ -1275,6 +1421,7 @@ export class Interceptor {
           usage = collected.usage;
           model = collected.model;
           fullContent = collected.fullContent;
+          if (collected.rawUsage) rawUsage = collected.rawUsage;
         } catch {
           // ignore
         }
@@ -1299,6 +1446,7 @@ export class Interceptor {
         cacheReadTokens: usage.cacheReadTokens || undefined,
         model,
         aborted,
+        rawUsage,
         estimated: false,
       };
     }
@@ -1307,6 +1455,7 @@ export class Interceptor {
       outputTokens: this.tokenCounter.estimateFromText(fullContent),
       model,
       aborted,
+      rawUsage,
       estimated: true,
     };
   }
@@ -1329,9 +1478,12 @@ export class Interceptor {
     }
     // 思源智能体 usage 事件格式：顶层 promptTokens / completionTokens
     if (data?.promptTokens !== undefined || data?.completionTokens !== undefined) {
-      const inputTokens = data.promptTokens ?? 0;
+      const promptTokens = data.promptTokens ?? 0;
+      const lastPromptTokens = data.lastPromptTokens ?? 0;
+      // 优先采用 lastPromptTokens（本请求真实发送量）；异常时回退 promptTokens
+      const inputTokens = lastPromptTokens > 0 && (promptTokens === 0 || lastPromptTokens <= promptTokens) ? lastPromptTokens : promptTokens;
       const outputTokens = data.completionTokens ?? 0;
-      const cacheReadTokens = data.cacheReadTokens ?? data.cachedInputTokens ?? 0;
+      const cacheReadTokens = data.cachedTokens ?? data.cacheReadTokens ?? data.cachedInputTokens ?? 0;
       if (inputTokens === 0 && outputTokens === 0) return null;
       return { inputTokens, outputTokens, cacheReadTokens };
     }
@@ -1437,7 +1589,9 @@ export class Interceptor {
     success: boolean,
     model?: string,
     cacheReadTokens?: number,
-    estimated: boolean = true
+    estimated: boolean = true,
+    rawUsage?: Record<string, unknown>,
+    attribution?: { notebookId?: string; docId?: string; docPath?: string; blockIds?: string[] }
   ): void {
     const finalModel = this.resolveModelName(model || aiCall.model, aiCall);
     const record: TokenRecord = {
@@ -1454,6 +1608,11 @@ export class Interceptor {
       requestTime: Date.now() - startTime,
       success,
       estimated,
+      rawUsage,
+      notebookId: attribution?.notebookId,
+      docId: attribution?.docId,
+      docPath: attribution?.docPath,
+      blockIds: attribution?.blockIds,
     };
     this.store.addRecord(record);
     this.logDebug(`Recorded: ${record.apiKeyName} | ${record.model} | in=${inputTokens} out=${outputTokens} cache=${cacheReadTokens ?? 0} total=${record.totalTokens} success=${success}`);

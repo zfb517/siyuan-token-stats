@@ -49,7 +49,21 @@ const DEFAULT_SETTINGS: PluginSettings = {
   currency: "¥",
   recalcCostOnPriceChange: true,
   syncStatistics: true,
+  diagnosticExportCount: 50,
   showDisclaimer: true,
+  // L2 数据飞轮（v1.5.3）
+  enableForecast: true,
+  forecastMethod: "recentTrend",
+  forecastWindowDays: 7,
+  enableAnomaly: true,
+  anomalySensitivity: 2.5,
+  anomalyLookbackDays: 30,
+  enableSuggestions: true,
+  // 仪表盘简洁模式：默认关闭高级视图，回归简洁核心仪表盘
+  showAdvancedDashboard: false,
+  enableNoteAttribution: true,
+  attributionTopN: 10,
+  tokenDisplayUnit: "auto",
   modelPrices: {},
   pricePacks: [],
 };
@@ -905,6 +919,24 @@ export class Store {
     return this.resolvePrice(model).price;
   }
 
+  /** 判断某模型是否配置了缓存读取单价（用于优化建议的缓存命中率提示） */
+  modelHasCachePrice(model: string): boolean {
+    const { price } = this.resolvePrice(model);
+    return !!(price && typeof price.cacheRead === "number" && price.cacheRead > 0);
+  }
+
+  /** 获取某模型输入单价（每 1K tokens），未配置返回 0 */
+  getInputPrice(model: string): number {
+    const { price } = this.resolvePrice(model);
+    return price ? price.input : 0;
+  }
+
+  /** 获取某模型缓存读取单价（每 1K tokens），未配置返回 0 */
+  getCachePrice(model: string): number {
+    const { price } = this.resolvePrice(model);
+    return price && price.cacheRead ? price.cacheRead : 0;
+  }
+
   /** 查找涵盖指定模型的资源包（按归一化模型名精确匹配包内 models 列表） */
   findPackForModel(normalizedModel: string): PricePack | null {
     const packs = this.data.settings.pricePacks || [];
@@ -932,15 +964,19 @@ export class Store {
   calcCost(model: string, inputTokens: number, outputTokens: number, cacheReadTokens?: number): number {
     const { price, fromPack } = this.resolvePrice(model);
     if (!price) return 0;
-    const inputCost = (inputTokens / 1000) * price.input;
+    // inputTokens（= lastPromptTokens）已包含缓存命中部分；缓存命中 token 按折扣价计费，
+    // 未命中部分按输入价计费，避免同一批 token 既按输入价又按缓存价重复计费。
+    const cache = cacheReadTokens && cacheReadTokens > 0 ? cacheReadTokens : 0;
+    const uncachedInput = Math.max(0, inputTokens - cache);
+    const inputCost = (uncachedInput / 1000) * price.input;
     const outputCost = (outputTokens / 1000) * price.output;
     let total = inputCost + outputCost;
     // 缓存命中 tokens 按独立折扣单价计费（若已配置）
-    if (price.cacheRead && cacheReadTokens && cacheReadTokens > 0) {
+    if (price.cacheRead && cache > 0) {
       // 资源包模式下受「缓存命中是否计费」开关控制
       const countCache = !fromPack || this.data.settings.packCountCacheRead !== false;
       if (countCache) {
-        total += (cacheReadTokens / 1000) * price.cacheRead;
+        total += (cache / 1000) * price.cacheRead;
       }
     }
     return total;
@@ -975,11 +1011,8 @@ export class Store {
     if (this.data.settings.recalcCostOnPriceChange !== false) {
       return live;
     }
-    if (typeof r.cost === "number") {
-      // 快照模式下，缓存成本 = 快照费用 - 实时输入/输出费用（近似）
-      const baseCost = this.calcCost(r.model, r.inputTokens, r.outputTokens, 0);
-      return Math.max(0, r.cost - baseCost);
-    }
+    // 始终基于 r.cacheReadTokens 与当前缓存单价直接计算（结果准确）；
+    // 旧版「快照费用 - 输入/输出费用」的减法近似在新计费公式下可能为负，已弃用。
     return live;
   }
 

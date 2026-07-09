@@ -6,6 +6,7 @@ import { Dialog, showMessage, confirm, getFrontend } from "siyuan";
 import type { Store } from "./store";
 import type { KeyManager } from "./key-manager";
 import type { StatisticsSummary, KeyStat, DailyStat, ModelStat, TokenRecord, PluginSettings } from "./types";
+import { projectMonthEnd, detectAnomalies, buildSuggestions } from "./analytics";
 
 /** 转义 HTML 特殊字符，防止 XSS */
 function esc(str: string): string {
@@ -46,6 +47,18 @@ function getWeekStart(d: Date): Date {
 /** 获取指定日期所在月起始 */
 function getMonthStart(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), 1);
+}
+
+/**
+ * Token 数字格式化：
+ * auto  模式：>=1亿显示 X.XXX亿，>=1万显示 XXX.X万，否则原样；
+ * full 模式：始终 toLocaleString 完整数字。
+ */
+function fmtToken(n: number, mode: "auto" | "full"): string {
+  if (mode !== "auto") return n.toLocaleString();
+  if (n >= 1e8) return (n / 1e8).toFixed(3) + "亿";
+  if (n >= 1e4) return (n / 1e4).toFixed(1) + "万";
+  return n.toLocaleString();
 }
 
 export class Dashboard {
@@ -275,6 +288,7 @@ export class Dashboard {
         usagePercent,
         isAlert: key.alertThreshold > 0 && usagePercent >= key.alertThreshold,
         isExceeded: key.quotaLimit > 0 && usage.totalTokens >= key.quotaLimit,
+        enabled: key.enabled !== false,
       });
     }
 
@@ -354,6 +368,7 @@ export class Dashboard {
     const settings = this.store.getSettings();
     const globalPercent = this.keyManager.getGlobalUsagePercent(settings);
     const globalUsage = this.keyManager.getGlobalUsage(settings);
+    const numFmt = settings.tokenDisplayUnit || "auto";
 
     const minDate = this.getMinRecordDate();
     const maxDate = this.getMaxRecordDate();
@@ -391,22 +406,22 @@ export class Dashboard {
           <div class="tks-card">
             <div class="tks-card-icon">🪙</div>
             <div class="tks-card-body">
-              <div class="tks-card-value">${s.totalTokens.toLocaleString()}</div>
+              <div class="tks-card-value">${fmtToken(s.totalTokens, numFmt)}</div>
               <div class="tks-card-label">总 Tokens</div>
-              ${settings.dashboardSplitExactEstimate ? `<div class="tks-card-sub">精确 ${s.exactTokens.toLocaleString()} · 估算 ${s.estimatedTokens.toLocaleString()}</div>` : ""}
+              ${settings.dashboardSplitExactEstimate ? `<div class="tks-card-sub">精确 ${fmtToken(s.exactTokens, numFmt)} · 估算 ${fmtToken(s.estimatedTokens, numFmt)}</div>` : ""}
             </div>
           </div>
           <div class="tks-card">
             <div class="tks-card-icon">📥</div>
             <div class="tks-card-body">
-              <div class="tks-card-value">${s.totalInputTokens.toLocaleString()}</div>
+              <div class="tks-card-value">${fmtToken(s.totalInputTokens, numFmt)}</div>
               <div class="tks-card-label">输入 Tokens</div>
             </div>
           </div>
           <div class="tks-card">
             <div class="tks-card-icon">📤</div>
             <div class="tks-card-body">
-              <div class="tks-card-value">${s.totalOutputTokens.toLocaleString()}</div>
+              <div class="tks-card-value">${fmtToken(s.totalOutputTokens, numFmt)}</div>
               <div class="tks-card-label">输出 Tokens</div>
             </div>
           </div>
@@ -434,7 +449,7 @@ export class Dashboard {
           <div class="tks-card tks-card-cache">
             <div class="tks-card-icon">❄️</div>
             <div class="tks-card-body">
-              <div class="tks-card-value">${s.totalCacheReadTokens.toLocaleString()}</div>
+              <div class="tks-card-value">${fmtToken(s.totalCacheReadTokens, numFmt)}</div>
               <div class="tks-card-label">缓存命中 Tokens</div>
               ${this.store.hasAnyPrice()
                 ? `<div class="tks-card-sub">成本 ${this.store.formatCost(s.totalCacheCost)}${s.totalCost > 0 ? ` · 占 ${(s.totalCacheCost / s.totalCost * 100).toFixed(1)}%` : ""}</div>`
@@ -446,7 +461,7 @@ export class Dashboard {
             <div class="tks-card-icon">🌍</div>
             <div class="tks-card-body">
               <div class="tks-card-value">${globalPercent.toFixed(1)}%</div>
-              <div class="tks-card-label">全局限额 ${globalUsage.totalTokens.toLocaleString()} / ${settings.globalQuotaLimit.toLocaleString()}</div>
+              <div class="tks-card-label">全局限额 ${fmtToken(globalUsage.totalTokens, numFmt)} / ${fmtToken(settings.globalQuotaLimit, numFmt)}</div>
             </div>
           </div>
           ` : ""}
@@ -490,6 +505,17 @@ export class Dashboard {
           </div>
         </div>
 
+        ${settings.showAdvancedDashboard !== false ? this.renderForecastPanel(s, settings) : ""}
+        ${settings.showAdvancedDashboard !== false ? this.renderAnomalyPanel(s, settings) : ""}
+        ${settings.showAdvancedDashboard !== false ? this.renderSuggestionsPanel(s, settings) : ""}
+
+        <!-- 笔记归因（按文档） -->
+        ${settings.showAdvancedDashboard !== false && settings.enableNoteAttribution !== false ? this.renderAttributionPanel(settings) : ""}
+
+        ${settings.showAdvancedDashboard === false ? `
+        <div class="tks-advanced-hint">💡 高级数据洞察（月末预测 / 异常检测 / 优化建议 / 笔记归因）已隐藏，可在「设置 → 数据洞察」开启「显示高级数据洞察」。</div>
+        ` : ""}
+
         <!-- 最近请求 -->
         <div class="tks-section">
           <h3 class="tks-section-title">📝 最近请求记录（最近 ${recentRecords.length} 条）</h3>
@@ -500,6 +526,7 @@ export class Dashboard {
                   <th>时间</th>
                   <th>API Key</th>
                   <th>来源</th>
+                  ${settings.enableNoteAttribution !== false ? `<th>文档</th>` : ""}
                   <th>模型</th>
                   <th>输入</th>
                   <th>缓存命中</th>
@@ -511,7 +538,7 @@ export class Dashboard {
                 </tr>
               </thead>
               <tbody>
-                ${recentRecords.map((r) => this.renderRecordRow(r)).join("")}
+                ${recentRecords.map((r) => this.renderRecordRow(r, settings.enableNoteAttribution !== false)).join("")}
               </tbody>
             </table>
           </div>
@@ -523,10 +550,58 @@ export class Dashboard {
           <button class="b3-button b3-button--outline" id="tks-sync" title="触发思源云同步并合并其他端的统计记录（与设置「立即同步」功能相同）。需先在思源「设置 - 关于 - 云端」配置并启用云同步；若未配置则只合并本地已有数据。">☁️ 立即同步</button>
           <button class="b3-button b3-button--outline" id="tks-export-json">📥 导出 JSON</button>
           <button class="b3-button b3-button--outline" id="tks-export-csv">📊 导出 CSV</button>
+          <button class="b3-button b3-button--outline" id="tks-export-diagnostic" title="导出最近 N 条带原始 usage 的记录（来自供应商响应、未裁剪），用于排查用量统计偏差。条数在设置中「诊断日志导出条数」配置。">🔍 导出原始 usage 日志</button>
           <button class="b3-button b3-button--outline b3-button--danger" id="tks-clear-records">🗑️ 清除记录</button>
         </div>
       </div>
     `;
+  }
+
+  /**
+   * 笔记归因面板：按「来源文档」聚合 Token 消耗，列出消耗最高的若干文档，
+   * 帮助用户定位「最费 Token 的笔记」。仅统计带有来源信息的记录，无来源信息的记录不计入。
+   */
+  private renderAttributionPanel(settings: PluginSettings): string {
+    const records = this.store.getRecords();
+    const numFmt = settings.tokenDisplayUnit || "auto";
+    const map = new Map<string, { docPath: string; docId: string; tokens: number; count: number }>();
+    for (const r of records) {
+      if (!r.docPath && !r.docId) continue;
+      const key = r.docId || r.docPath || "";
+      if (!key) continue;
+      let entry = map.get(key);
+      if (!entry) {
+        entry = { docPath: r.docPath || "(未命名文档)", docId: r.docId || "", tokens: 0, count: 0 };
+        map.set(key, entry);
+      }
+      entry.tokens += r.totalTokens || 0;
+      entry.count += 1;
+    }
+    const topN = Math.max(1, settings.attributionTopN || 10);
+    const list = Array.from(map.values()).sort((a, b) => b.tokens - a.tokens).slice(0, topN);
+    if (list.length === 0) {
+      return `<div class="tks-section">
+        <h3 class="tks-section-title">📂 笔记归因（按文档）</h3>
+        <div class="tks-empty-chart">暂无归因数据。当你在思源中使用 AI（含引用块 / 文档）时，本插件会自动记录调用来源文档，便于按文档统计 Token 消耗。</div>
+      </div>`;
+    }
+    const maxTokens = Math.max(...list.map((d) => d.tokens), 1);
+    return `<div class="tks-section">
+      <h3 class="tks-section-title">📂 笔记归因（按文档 Top ${list.length}）</h3>
+      <div class="tks-attr-stats">
+        ${list
+          .map((d) => `
+          <div class="tks-attr-row">
+            <div class="tks-attr-head">
+              <span class="tks-attr-name" title="${esc(d.docId)}">${esc(d.docPath)}</span>
+              <span class="tks-attr-meta">${fmtToken(d.tokens, numFmt)} tokens · ${d.count} 次</span>
+            </div>
+            <div class="tks-attr-bar"><div class="tks-attr-bar-fill" style="width:${(d.tokens / maxTokens * 100).toFixed(1)}%"></div></div>
+          </div>`)
+          .join("")}
+      </div>
+      <div class="tks-attr-caption">按文档统计的 Token 消耗，用于定位「最费 Token 的笔记」。仅统计带来源信息的记录；悬停文档名可查看文档 id。</div>
+    </div>`;
   }
 
   private getMinRecordDate(): string | null {
@@ -546,13 +621,16 @@ export class Dashboard {
   }
 
   private renderKeyStat(k: KeyStat): string {
+    const numFmt = this.store.getSettings().tokenDisplayUnit || "auto";
     const quotaText =
       k.quotaLimit > 0
-        ? `${k.totalTokens.toLocaleString()} / ${k.quotaLimit.toLocaleString()}`
-        : `${k.totalTokens.toLocaleString()} (不限)`;
+        ? `${fmtToken(k.totalTokens, numFmt)} / ${fmtToken(k.quotaLimit, numFmt)}`
+        : `${fmtToken(k.totalTokens, numFmt)} (不限)`;
 
     const thresholdText = k.alertThreshold > 0 ? ` · 阈值 ${k.alertThreshold}%` : "";
-    const statusIcon = k.isExceeded
+    const statusIcon = !k.enabled
+      ? "🚫"
+      : k.isExceeded
       ? "⛔"
       : k.isAlert
       ? "⚠️"
@@ -561,13 +639,13 @@ export class Dashboard {
       : "";
 
     return `
-      <div class="tks-key-stat ${k.isAlert ? "tks-key-stat-alert" : ""} ${k.isExceeded ? "tks-key-stat-exceeded" : ""}">
+      <div class="tks-key-stat ${k.isAlert ? "tks-key-stat-alert" : ""} ${k.isExceeded ? "tks-key-stat-exceeded" : ""} ${!k.enabled ? "tks-key-stat-disabled" : ""}">
         <div class="tks-key-stat-header">
-          <span class="tks-key-stat-name">${statusIcon} ${esc(k.apiKeyName)}</span>
+          <span class="tks-key-stat-name">${statusIcon} ${esc(k.apiKeyName)}${!k.enabled ? ' <span class="tks-badge tks-badge-off">已禁用</span>' : ""}</span>
           <span class="tks-key-stat-requests">${k.totalRequests} 次请求</span>
         </div>
         <div class="tks-key-stat-bar">
-          <div class="tks-key-stat-fill ${k.isAlert ? "alert" : ""} ${k.isExceeded ? "exceeded" : ""}"
+          <div class="tks-key-stat-fill ${k.isAlert ? "alert" : ""} ${k.isExceeded ? "exceeded" : ""} ${!k.enabled ? "disabled" : ""}"
                style="width: ${k.quotaLimit > 0 ? k.usagePercent : 0}%"></div>
         </div>
         <div class="tks-key-stat-detail">
@@ -672,6 +750,7 @@ export class Dashboard {
   }
 
   private renderModelBar(m: ModelStat, max: number): string {
+    const numFmt = this.store.getSettings().tokenDisplayUnit || "auto";
     const widthPercent = Math.max(1, (m.tokens / max) * 100);
     return `
       <div class="tks-model-bar">
@@ -680,13 +759,14 @@ export class Dashboard {
           <div class="tks-model-bar-fill" style="width: ${widthPercent}%; background: ${modelColor(m.model.toLowerCase().trim())}"></div>
         </div>
         <div class="tks-model-detail">
-          ${m.tokens.toLocaleString()} tokens · ${m.count} 次${this.store.hasAnyPrice() ? ` · 💰 ${this.store.formatCost(m.cost)}` : ""}
+          ${fmtToken(m.tokens, numFmt)} tokens · ${m.count} 次${this.store.hasAnyPrice() ? ` · 💰 ${this.store.formatCost(m.cost)}` : ""}
         </div>
       </div>
     `;
   }
 
-  private renderRecordRow(r: TokenRecord): string {
+  private renderRecordRow(r: TokenRecord, showDoc: boolean): string {
+    const numFmt = this.store.getSettings().tokenDisplayUnit || "auto";
     const time = new Date(r.timestamp).toLocaleString("zh-CN", {
       month: "2-digit",
       day: "2-digit",
@@ -699,11 +779,12 @@ export class Dashboard {
         <td>${time}</td>
         <td title="${esc(r.apiKeyName)}">${esc(r.apiKeyName)}</td>
         <td>${esc(r.source)}</td>
+        ${showDoc ? `<td class="tks-doc-cell" title="${esc(r.docId || "")}">${esc(r.docPath || "—")}</td>` : ""}
         <td>${esc(r.model)}</td>
-        <td>${r.inputTokens.toLocaleString()}</td>
-        <td>${r.cacheReadTokens ? r.cacheReadTokens.toLocaleString() : "—"}</td>
-        <td>${r.outputTokens.toLocaleString()}</td>
-        <td><strong>${r.totalTokens.toLocaleString()}</strong></td>
+        <td>${fmtToken(r.inputTokens, numFmt)}</td>
+        <td>${r.cacheReadTokens ? fmtToken(r.cacheReadTokens, numFmt) : "—"}</td>
+        <td>${fmtToken(r.outputTokens, numFmt)}</td>
+        <td><strong>${fmtToken(r.totalTokens, numFmt)}</strong></td>
         <td>${this.store.hasAnyPrice() ? `${this.store.formatCost(this.store.getRecordCost(r))}<br><span class="tks-sub">缓存 ${this.store.formatCost(this.store.getRecordCacheCost(r))}</span>` : "—"}</td>
         <td>${r.requestTime}ms</td>
         <td>${r.success ? "✅" : "❌"}</td>
@@ -764,6 +845,47 @@ export class Dashboard {
       const csv = this.buildRecordsCsv();
       this.downloadFile(`siyuan-token-stats-${new Date().toISOString().split("T")[0]}.csv`, csv, "text/csv;charset=utf-8");
       showMessage("数据已导出（CSV）", 2000, "info");
+    });
+
+    // 诊断模式：导出最近 N 条带原始 usage 的记录
+    el.querySelector("#tks-export-diagnostic")?.addEventListener("click", () => {
+      const limit = this.store.getSettings().diagnosticExportCount || 50;
+      const records = this.store.getRecords();
+      // 优先取最近（timestamp 最大）且带 rawUsage 的记录
+      const withUsage = records
+        .filter((r) => r.rawUsage && Object.keys(r.rawUsage).length > 0)
+        .sort((a, b) => b.timestamp - a.timestamp);
+      const picked = limit > 0 ? withUsage.slice(0, limit) : withUsage;
+      if (picked.length === 0) {
+        showMessage("暂无可导出的原始 usage 记录（需在设置中开启相关功能后产生）", 3000, "info");
+        return;
+      }
+      const payload = picked.map((r) => ({
+        timestamp: r.timestamp,
+        apiKeyName: r.apiKeyName,
+        model: r.model,
+        source: r.source,
+        recorded: {
+          inputTokens: r.inputTokens,
+          outputTokens: r.outputTokens,
+          cacheReadTokens: r.cacheReadTokens ?? 0,
+          totalTokens: r.totalTokens,
+          estimated: r.estimated ?? false,
+        },
+        rawUsage: r.rawUsage,
+      }));
+      const data = JSON.stringify(
+        {
+          exportedAt: new Date().toISOString(),
+          note: "原始 usage 来自 API 供应商响应，未做任何裁剪，用于排查用量统计偏差。",
+          count: payload.length,
+          records: payload,
+        },
+        null,
+        2
+      );
+      this.downloadFile(`siyuan-token-stats-usage-${new Date().toISOString().split("T")[0]}.json`, data, "application/json");
+      showMessage(`已导出 ${payload.length} 条原始 usage 记录`, 3000, "info");
     });
 
     el.querySelector("#tks-clear-records")?.addEventListener("click", () => {
@@ -835,7 +957,7 @@ export class Dashboard {
     const archivesForCsv = this.store.getArchives();
     if (archivesForCsv.length > 0) lines.push(`# 归档月份数,${archivesForCsv.length}`);
     // 表头
-    lines.push(["时间", "模型", "输入Token", "缓存命中Token", "输出Token", "总计Token", "费用", "缓存成本", "Key名称", "耗时(ms)", "成功"].join(","));
+    lines.push(["时间", "模型", "输入Token", "缓存命中Token", "输出Token", "总计Token", "费用", "缓存成本", "Key名称", "文档", "耗时(ms)", "成功"].join(","));
     // 数据行
     for (const r of records) {
       const d = new Date(r.timestamp);
@@ -852,6 +974,7 @@ export class Dashboard {
         cur + this.store.getRecordCost(r).toFixed(4),
         cur + cacheCost,
         keyName,
+        r.docPath || "",
         r.requestTime,
         r.success ? "是" : "否",
       ].map(escapeCsv).join(","));
@@ -874,5 +997,87 @@ export class Dashboard {
     }
     // 加 BOM 头，保证 Excel 正确识别 UTF-8 中文
     return "﻿" + lines.join("\n");
+  }
+
+  // ─── L2 数据飞轮面板（v1.5.3）───
+
+  private renderProgress(percent: number, label: string, tone: "ok" | "warn" | "over" = "ok"): string {
+    const p = Math.max(0, Math.min(100, percent));
+    return `<div class="tks-progress">
+      <div class="tks-progress-head"><span>${esc(label)}</span><span>${percent.toFixed(1)}%</span></div>
+      <div class="tks-progress-track"><div class="tks-progress-fill tks-progress-fill--${tone}" style="width:${p}%"></div></div>
+    </div>`;
+  }
+
+  private renderForecastPanel(s: StatisticsSummary, settings: PluginSettings): string {
+    if (settings.enableForecast === false) return "";
+    const f = projectMonthEnd(this.store, settings, this.keyManager, new Date());
+    const numFmt = settings.tokenDisplayUnit || "auto";
+    if (!f.hasData) {
+      return `<div class="tks-section"><h3 class="tks-section-title">🔮 月末预测</h3><div class="tks-empty-chart">当前周期内暂无用量数据，产生调用后将自动预测月末费用与 Token。</div></div>`;
+    }
+    const cur = this.store.getCurrency();
+    const toneOf = (p: number): "ok" | "warn" | "over" => (p > 100 ? "over" : p > 80 ? "warn" : "ok");
+    const tokenBar = f.tokenLimit > 0 ? this.renderProgress(f.projectedTokenPercent, "预计月末 Token 占限额", toneOf(f.projectedTokenPercent)) : "";
+    const costBar = f.costLimit > 0 ? this.renderProgress(f.projectedCostPercent, "预计月末费用占限额", toneOf(f.projectedCostPercent)) : "";
+    const methodText = settings.forecastMethod === "linear" ? "已用日均线性外推" : `最近 ${(settings.forecastWindowDays || 7)} 日趋势`;
+    return `<div class="tks-section">
+      <h3 class="tks-section-title">🔮 月末预测（${esc(f.cycleLabel)}）</h3>
+      <div class="tks-forecast-grid">
+        <div class="tks-fc-card"><div class="tks-fc-value">${cur}${f.projectedCost.toFixed(2)}</div><div class="tks-fc-label">预计月末费用</div><div class="tks-fc-sub">已用 ${cur}${f.usedCost.toFixed(2)} · 日均 ${cur}${f.runRateCost.toFixed(2)}</div></div>
+        <div class="tks-fc-card"><div class="tks-fc-value">${fmtToken(f.projectedTokens, numFmt)}</div><div class="tks-fc-label">预计月末 Token</div><div class="tks-fc-sub">已用 ${fmtToken(f.usedTokens, numFmt)} · 日均 ${fmtToken(f.runRateTokens, numFmt)}</div></div>
+        <div class="tks-fc-card"><div class="tks-fc-value">${f.daysLeft.toFixed(0)}</div><div class="tks-fc-label">剩余天数</div><div class="tks-fc-sub">共 ${f.daysTotal} 天 · 已过 ${f.daysElapsed.toFixed(1)} 天</div></div>
+      </div>
+      ${tokenBar}${costBar}
+      <div class="tks-fc-note">预测基于「${esc(methodText)}」，仅供参考，实际以 API 供应商官方账单为准。</div>
+    </div>`;
+  }
+
+  private renderAnomalyPanel(s: StatisticsSummary, settings: PluginSettings): string {
+    if (settings.enableAnomaly === false) return "";
+    const a = detectAnomalies(this.store, settings, new Date());
+    if (!a.hasData) {
+      return `<div class="tks-section"><h3 class="tks-section-title">⚠️ 用量异常</h3><div class="tks-empty-chart">暂无足够数据，异常检测需至少 3 天用量记录。</div></div>`;
+    }
+    const items = a.anomalies.map((x) => {
+      const sev = x.severity === "high" ? "tks-anom--high" : "tks-anom--med";
+      return `<div class="tks-anom ${sev}">
+        <div class="tks-anom-date">${esc(x.date)}</div>
+        <div class="tks-anom-body">
+          <div class="tks-anom-reason">${esc(x.reason)}</div>
+          <div class="tks-anom-meta">Z=${x.z.toFixed(1)} · 偏离均值 ${x.deviationPct.toFixed(0)}%</div>
+        </div>
+      </div>`;
+    }).join("");
+    const newModels = a.newModels.length > 0
+      ? `<div class="tks-anom-note">🆕 近 7 天新出现的模型：${a.newModels.map((m) => esc(m)).join("、")}</div>`
+      : "";
+    return `<div class="tks-section">
+      <h3 class="tks-section-title">⚠️ 用量异常（近 ${settings.anomalyLookbackDays || 30} 天）</h3>
+      ${a.anomalies.length === 0 ? `<div class="tks-empty-chart">未检测到显著异常（阈值 Z ≥ ${(settings.anomalySensitivity || 2.5).toFixed(1)}）。</div>` : `<div class="tks-anom-list">${items}</div>`}
+      ${newModels}
+    </div>`;
+  }
+
+  private renderSuggestionsPanel(s: StatisticsSummary, settings: PluginSettings): string {
+    if (settings.enableSuggestions === false) return "";
+    const list = buildSuggestions(this.store, settings, s, new Date());
+    if (list.length === 0) {
+      return `<div class="tks-section"><h3 class="tks-section-title">💡 优化建议</h3><div class="tks-empty-chart">暂无优化建议，当前用量结构较为均衡。</div></div>`;
+    }
+    const items = list.map((x) => {
+      const sevCls = x.severity === "high" ? "tks-sug--high" : x.severity === "medium" ? "tks-sug--med" : "tks-sug--low";
+      const sevTxt = x.severity === "high" ? "高" : x.severity === "medium" ? "中" : "低";
+      const saving = typeof x.estimatedSaving === "number" && x.estimatedSaving > 0
+        ? `<span class="tks-sug-saving">预估可省 ${this.store.getCurrency()}${x.estimatedSaving.toFixed(2)}/周期</span>` : "";
+      return `<div class="tks-sug ${sevCls}">
+        <div class="tks-sug-head"><span class="tks-sug-sev">${sevTxt}</span><span class="tks-sug-title">${esc(x.title)}</span>${saving}</div>
+        <div class="tks-sug-detail">${esc(x.detail)}</div>
+      </div>`;
+    }).join("");
+    return `<div class="tks-section">
+      <h3 class="tks-section-title">💡 优化建议</h3>
+      <div class="tks-sug-list">${items}</div>
+    </div>`;
   }
 }

@@ -84,6 +84,19 @@ export interface TokenRecord {
   estimated?: boolean;
   /** 费用快照（仅当关闭「单价变更后自动重算」时写入，用于冻结当时费用；开启自动重算时为 undefined 实时计算） */
   cost?: number;
+  /**
+   * 诊断模式：本次调用 API 返回的原始 usage 对象（来自供应商响应，未做任何裁剪）。
+   * 仅当开启「诊断模式」且成功解析到 usage 时写入，用于排查用量偏差，不参与任何费用计算。
+   */
+  rawUsage?: Record<string, unknown>;
+  /** 笔记归因：来源笔记本（笔记本 id），来自请求体 references[].box */
+  notebookId?: string;
+  /** 笔记归因：来源文档（文档 id），来自请求体 references[].rootID */
+  docId?: string;
+  /** 笔记归因：来源文档路径（含笔记本的人文意义路径），来自请求体 references[].hpath */
+  docPath?: string;
+  /** 笔记归因：涉及的块 id 列表，来自请求体 references[].id */
+  blockIds?: string[];
 }
 
 /**
@@ -177,6 +190,36 @@ export interface PluginSettings {
   recalcCostOnPriceChange: boolean;
   /** 跨端统计合并：开启后，各端（电脑/鸿蒙/浏览器）通过思源数据同步共享同一套 API Key 时，自动按记录合并多方用量 */
   syncStatistics: boolean;
+  /**
+   * 诊断模式导出条数：仪表盘「导出原始 usage 日志」时，最多导出最近 N 条带 rawUsage 的记录（默认 50）。
+   * 设为 0 表示全部导出。
+   */
+  diagnosticExportCount: number;
+  // ─── L2 数据飞轮（v1.5.3）───
+  /** 月末预测：开启后在仪表盘展示「预计月末费用 / Token」及与全局限额的进度对比 */
+  enableForecast?: boolean;
+  /** 预测方法：linear=按已用日均线性外推；recentTrend=按最近 N 日均值外推（默认） */
+  forecastMethod?: "linear" | "recentTrend";
+  /** 最近趋势窗口天数（recentTrend 方法使用，默认 7） */
+  forecastWindowDays?: number;
+  /** 异常检测：开启后在仪表盘列出用量离群日 */
+  enableAnomaly?: boolean;
+  /** 异常敏感度：标准差倍数阈值（默认 2.5），越大越宽松 */
+  anomalySensitivity?: number;
+  /** 异常检测回溯天数（默认 30，至少 3） */
+  anomalyLookbackDays?: number;
+  /** 优化建议：开启后在仪表盘给出基于数据的降本 / 提效建议 */
+  enableSuggestions?: boolean;
+  // ─── 仪表盘简洁模式（v1.5.3）───
+  /** 显示高级数据洞察总开关：关闭时仪表盘仅展示核心视图（简洁版），隐藏预测 / 异常 / 建议 / 笔记归因 */
+  showAdvancedDashboard?: boolean;
+  /** 笔记归因面板：开启后在高级视图中展示「按文档 Token 消耗」排行（采集始终后台进行，此开关仅控制显示） */
+  enableNoteAttribution?: boolean;
+  /** 笔记归因显示条数（Top N，默认 10），替换原硬编码上限 */
+  attributionTopN?: number;
+  // ─── 数字显示（v1.5.3）───
+  /** Token 数字格式：auto=大数字自动用 M/k 后缀（默认）；full=始终显示完整数字 */
+  tokenDisplayUnit?: "auto" | "full";
   /** 每模型单价（每 1K tokens），键为模型名小写归一化 */
   modelPrices: Record<string, ModelPrice>;
   /** 资源包单价：一个包涵盖多个模型，包内模型共用同一单价 */
@@ -282,4 +325,5 @@ export interface KeyStat {
   usagePercent: number;
   isAlert: boolean;
   isExceeded: boolean;
+  enabled: boolean;
 }
