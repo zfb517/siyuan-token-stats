@@ -4,8 +4,10 @@
  *
  * 估算规则（基于 GPT tokenizer 的经验值）：
  * - 英文：约 4 个字符 ≈ 1 token（即每词约 1.3 token）
- * - 中文：约 1 个字符 ≈ 1 token（启发式估算，实际 GPT tokenizer 多为 1-2 token/字）
- * - 代码/符号：约 3 个字符 ≈ 1 token
+ * - 中文：约 1.5 token/字（折中取值：GPT-4o≈1.2、Claude/老GPT≈1.5-1.7、国产模型≈0.6-1.0，
+ *   统一一套系数无法按模型细分，取中位偏保守，宁可略高不明显低估）
+ * - 代码/符号：约 4 个字符 ≈ 1 token
+ * 说明：仅用于 API 响应缺失 usage 字段时的兜底估算；有真实 usage 时始终以真实值为准。
  */
 export class TokenCounter {
   /**
@@ -23,10 +25,10 @@ export class TokenCounter {
     // 剩余非中文非英文的字符数（符号、数字、空格等）
     const otherChars = Math.max(0, text.length - chineseChars - cjkPunctuation - englishCharEstimate);
 
-    // 中文 ≈ 1 token/字，英文单词 ≈ 1.3 token/词，符号 ≈ 0.25 token/字符
+    // 中文 ≈ 1.5 token/字，中文标点 ≈ 0.75 token/字，英文单词 ≈ 1.3 token/词，符号 ≈ 0.25 token/字符
     const estimate = Math.ceil(
-      chineseChars * 1.0 +
-      cjkPunctuation * 0.5 +
+      chineseChars * 1.5 +
+      cjkPunctuation * 0.75 +
       englishWords * 1.3 +
       otherChars * 0.25
     );

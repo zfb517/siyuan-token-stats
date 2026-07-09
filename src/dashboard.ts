@@ -160,8 +160,11 @@ export class Dashboard {
       failedRequests: 0,
       averageRequestTime: 0,
       totalCost: 0,
+      totalCacheReadTokens: 0,
+      totalCacheCost: 0,
       exactTokens: 0,
       estimatedTokens: 0,
+      archivedMonths: 0,
       modelStats: {},
       dailyStats: [],
       keyStats: [],
@@ -174,6 +177,8 @@ export class Dashboard {
       summary.totalInputTokens += r.inputTokens;
       summary.totalOutputTokens += r.outputTokens;
       summary.totalCost += this.store.getRecordCost(r);
+      summary.totalCacheReadTokens += r.cacheReadTokens || 0;
+      summary.totalCacheCost += this.store.getRecordCacheCost(r);
       totalTime += r.requestTime;
       // 精确值（来自 API usage）与启发式估算分别累计；旧版本记录无 estimated 字段，计入估算
       if (r.estimated === false) {
@@ -198,14 +203,51 @@ export class Dashboard {
           tokens: 0,
           inputTokens: 0,
           outputTokens: 0,
+          cacheReadTokens: 0,
           cost: 0,
+          cacheCost: 0,
         };
       }
       summary.modelStats[modelKey].count++;
       summary.modelStats[modelKey].tokens += r.totalTokens;
       summary.modelStats[modelKey].inputTokens += r.inputTokens;
       summary.modelStats[modelKey].outputTokens += r.outputTokens;
+      summary.modelStats[modelKey].cacheReadTokens += r.cacheReadTokens || 0;
       summary.modelStats[modelKey].cost += this.store.getRecordCost(r);
+      summary.modelStats[modelKey].cacheCost += this.store.getRecordCacheCost(r);
+    }
+
+    // 将按月聚合的归档汇总并入总计（明细被滚动淘汰的旧月份），避免历史数据从统计中消失
+    const archives = this.store.getArchives();
+    summary.archivedMonths = archives.length;
+    for (const a of archives) {
+      summary.totalTokens += a.totalTokens;
+      summary.totalInputTokens += a.totalInputTokens;
+      summary.totalOutputTokens += a.totalOutputTokens;
+      summary.totalCost += a.cost;
+      summary.totalCacheReadTokens += a.totalCacheReadTokens;
+      summary.totalCacheCost += a.cacheCost;
+      summary.exactTokens += a.exactTokens;
+      summary.estimatedTokens += a.estimatedTokens;
+      for (const [mk, m] of Object.entries(a.byModel)) {
+        if (!summary.modelStats[mk]) {
+          summary.modelStats[mk] = {
+            model: mk,
+            count: 0,
+            tokens: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheReadTokens: 0,
+            cost: 0,
+            cacheCost: 0,
+          };
+        }
+        summary.modelStats[mk].count += 0; // 归档按模型只聚合 token/费用，不重复计请求数
+        summary.modelStats[mk].tokens += m.tokens;
+        summary.modelStats[mk].inputTokens += m.inputTokens;
+        summary.modelStats[mk].outputTokens += m.outputTokens;
+        summary.modelStats[mk].cost += m.cost;
+      }
     }
 
     summary.averageRequestTime =
@@ -390,6 +432,16 @@ export class Dashboard {
               <div class="tks-card-label">估算总费用${this.store.hasAnyPrice() ? "" : "（请设置单价）"}</div>
             </div>
           </div>
+          <div class="tks-card tks-card-cache">
+            <div class="tks-card-icon">❄️</div>
+            <div class="tks-card-body">
+              <div class="tks-card-value">${s.totalCacheReadTokens.toLocaleString()}</div>
+              <div class="tks-card-label">缓存命中 Tokens</div>
+              ${this.store.hasAnyPrice()
+                ? `<div class="tks-card-sub">成本 ${this.store.formatCost(s.totalCacheCost)}${s.totalCost > 0 ? ` · 占 ${(s.totalCacheCost / s.totalCost * 100).toFixed(1)}%` : ""}</div>`
+                : `<div class="tks-card-sub">成本（未配置单价）</div>`}
+            </div>
+          </div>
           ${settings.globalQuotaLimit > 0 ? `
           <div class="tks-card tks-card-global">
             <div class="tks-card-icon">🌍</div>
@@ -400,6 +452,9 @@ export class Dashboard {
           </div>
           ` : ""}
         </div>
+        ${s.archivedMonths > 0 ? `
+        <div class="tks-archive-note">📦 另有 <b>${s.archivedMonths}</b> 个月归档数据（超出明细上限被滚动淘汰的旧月份）已计入上方总计与模型分布；归档为冻结快照，不随后续单价变更重算。</div>
+        ` : ""}
 
         <!-- API Key 用量 -->
         <div class="tks-section">
@@ -650,7 +705,7 @@ export class Dashboard {
         <td>${r.cacheReadTokens ? r.cacheReadTokens.toLocaleString() : "—"}</td>
         <td>${r.outputTokens.toLocaleString()}</td>
         <td><strong>${r.totalTokens.toLocaleString()}</strong></td>
-        <td>${this.store.hasAnyPrice() ? this.store.formatCost(this.store.getRecordCost(r)) : "—"}</td>
+        <td>${this.store.hasAnyPrice() ? `${this.store.formatCost(this.store.getRecordCost(r))}<br><span class="tks-sub">缓存 ${this.store.formatCost(this.store.getRecordCacheCost(r))}</span>` : "—"}</td>
         <td>${r.requestTime}ms</td>
         <td>${r.success ? "✅" : "❌"}</td>
       </tr>
@@ -779,12 +834,13 @@ export class Dashboard {
     }
     lines.push(`# 记录数,${records.length}`);
     // 表头
-    lines.push(["时间", "模型", "输入Token", "缓存命中Token", "输出Token", "总计Token", "费用", "Key名称", "耗时(ms)", "成功"].join(","));
+    lines.push(["时间", "模型", "输入Token", "缓存命中Token", "输出Token", "总计Token", "费用", "缓存成本", "Key名称", "耗时(ms)", "成功"].join(","));
     // 数据行
     for (const r of records) {
       const d = new Date(r.timestamp);
       const time = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
       const keyName = this.store.getApiKey(r.apiKeyId)?.name || r.apiKeyName || "";
+      const cacheCost = this.store.hasAnyPrice() ? this.store.getRecordCacheCost(r).toFixed(4) : "";
       lines.push([
         time,
         r.model,
@@ -793,6 +849,7 @@ export class Dashboard {
         r.outputTokens,
         r.totalTokens,
         cur + this.store.getRecordCost(r).toFixed(4),
+        cur + cacheCost,
         keyName,
         r.requestTime,
         r.success ? "是" : "否",

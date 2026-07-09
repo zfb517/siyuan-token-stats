@@ -86,6 +86,32 @@ export interface TokenRecord {
   cost?: number;
 }
 
+/**
+ * 月度归档汇总：当明细记录超过 maxRecords 上限被滚动淘汰时，
+ * 超出范围的更早月份会被聚合为一个月度汇总，避免历史数据彻底丢失。
+ * 归档是冻结快照（记录被淘汰那一刻的费用，不随后续单价变更重算）。
+ */
+export interface MonthArchive {
+  /** 月份标识 yyyy-MM */
+  month: string;
+  /** 被聚合的请求条数 */
+  count: number;
+  totalTokens: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCacheReadTokens: number;
+  /** 精确值总量（来自 API usage 的记录） */
+  exactTokens: number;
+  /** 启发式估算总量（无 usage 或旧版本记录） */
+  estimatedTokens: number;
+  /** 估算总费用（货币单位，淘汰时按当时单价计算） */
+  cost: number;
+  /** 缓存命中部分费用 */
+  cacheCost: number;
+  /** 按模型聚合：tokens / 输入 / 输出 / 费用 */
+  byModel: Record<string, { tokens: number; inputTokens: number; outputTokens: number; cost: number }>;
+}
+
 /** 限额重置周期 */
 export type QuotaResetCycle = "none" | "daily" | "monthly" | "custom";
 
@@ -109,6 +135,8 @@ export interface PluginSettings {
   showDisclaimer?: boolean;
   /** 最多保留多少条记录 */
   maxRecords: number;
+  /** 资源包模式下缓存命中是否计入费用：true（默认）计入；false 则资源包匹配到的请求其缓存命中 tokens 不计入费用估算，避免「大量命中缓存」场景下费用高估 */
+  packCountCacheRead: boolean;
   /** 全局总 Token 限额，0 = 不开启 */
   globalQuotaLimit: number;
   /** 全局总 Token 提醒阈值 (0-100)，0 = 不提醒 */
@@ -177,6 +205,8 @@ export interface PluginData {
   deletedKeys: string[];
   apiKeys: ApiKeyConfig[];
   records: TokenRecord[];
+  /** 月度归档汇总（超出明细上限被滚动淘汰的旧月份聚合，避免历史数据丢失） */
+  archives: MonthArchive[];
   settings: PluginSettings;
 }
 
@@ -201,10 +231,16 @@ export interface StatisticsSummary {
   averageRequestTime: number;
   /** 估算总费用（货币单位，由各模型单价计算） */
   totalCost: number;
+  /** 缓存命中 tokens 总量（API 返回的 cached_input_tokens 等） */
+  totalCacheReadTokens: number;
+  /** 缓存命中部分费用（货币单位） */
+  totalCacheCost: number;
   /** 精确值总量（来自 API usage 的记录 totalTokens 之和） */
   exactTokens: number;
   /** 启发式估算总量（无 usage 的记录 totalTokens 之和，含旧版本未区分记录） */
   estimatedTokens: number;
+  /** 已归档的月份数（超出明细上限被聚合为月度汇总的旧数据），其总量已计入上述总计 */
+  archivedMonths: number;
   modelStats: Record<string, ModelStat>;
   dailyStats: DailyStat[];
   keyStats: KeyStat[];
@@ -216,8 +252,12 @@ export interface ModelStat {
   tokens: number;
   inputTokens: number;
   outputTokens: number;
+  /** 缓存命中 tokens */
+  cacheReadTokens: number;
   /** 该模型估算费用 */
   cost: number;
+  /** 该模型缓存命中部分费用 */
+  cacheCost: number;
 }
 
 export interface DailyStat {

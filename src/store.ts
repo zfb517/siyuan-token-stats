@@ -2,7 +2,7 @@
  * 数据持久化层
  * 使用思源的文件 API 将数据存储在 data/storage/siyuan-token-stats/ 下。
  */
-import type { PluginData, TokenRecord, ApiKeyConfig, PluginSettings, ModelPrice, PricePack } from "./types";
+import type { PluginData, TokenRecord, ApiKeyConfig, PluginSettings, ModelPrice, PricePack, MonthArchive } from "./types";
 import { sha256Sync } from "./crypto";
 
 // 主存储与自有备份：使用 SiYuan 官方 Plugin.loadData/saveData API 读写，
@@ -10,8 +10,8 @@ import { sha256Sync } from "./crypto";
 // 且在集市开关插件（插件上下文重建）后依然存在 —— 这是唯一可靠的持久化层。
 const FILE_NAME = "data.json";
 const BACKUP_NAME = "data.backup.json";
-// 旧的裸 fetch 完整路径写法：仅用于 saveSync() 在 onunload 时的同步兜底写入，
-// 以及旧版安装目录迁移源的只读读取。
+// 完整物理路径写法：用于 saveSync() 卸载时经 sendBeacon 尽力落盘，
+// 以及无官方 saveData API 时 putFileRaw 的兜底写入。
 const STORAGE_PATH = "data/storage/siyuan-token-stats/data.json";
 const BACKUP_PATH = "data/storage/siyuan-token-stats/data.backup.json";
 // 旧版曾把数据写入插件安装目录的 settings.json，作为只读迁移源尝试恢复；
@@ -30,6 +30,7 @@ const DEFAULT_SETTINGS: PluginSettings = {
   showNotifications: true,
   showTopBarBadge: true,
   maxRecords: 5000,
+  packCountCacheRead: true,
   globalQuotaLimit: 0,
   globalAlertThreshold: 0,
   globalQuotaResetCycle: "monthly",
@@ -69,6 +70,7 @@ export class Store {
       deletedKeys: [],
       apiKeys: [],
       records: [],
+      archives: [],
       settings: { ...DEFAULT_SETTINGS },
     };
   }
@@ -291,6 +293,39 @@ export class Store {
           ? mergedRecords.slice(-maxRecords)
           : mergedRecords;
 
+      // 合并所有来源的归档（按月累加，取各来源该月之和）
+      const archiveMap = new Map<string, MonthArchive>();
+      const addArchive = (a: MonthArchive) => {
+        if (!a || !a.month) return;
+        const cur = archiveMap.get(a.month) || {
+          month: a.month, count: 0, totalTokens: 0, totalInputTokens: 0,
+          totalOutputTokens: 0, totalCacheReadTokens: 0, exactTokens: 0,
+          estimatedTokens: 0, cost: 0, cacheCost: 0, byModel: {},
+        };
+        cur.count += a.count || 0;
+        cur.totalTokens += a.totalTokens || 0;
+        cur.totalInputTokens += a.totalInputTokens || 0;
+        cur.totalOutputTokens += a.totalOutputTokens || 0;
+        cur.totalCacheReadTokens += a.totalCacheReadTokens || 0;
+        cur.exactTokens += a.exactTokens || 0;
+        cur.estimatedTokens += a.estimatedTokens || 0;
+        cur.cost += a.cost || 0;
+        cur.cacheCost += a.cacheCost || 0;
+        for (const [mk, m] of Object.entries(a.byModel || {})) {
+          const t = cur.byModel[mk] || { tokens: 0, inputTokens: 0, outputTokens: 0, cost: 0 };
+          t.tokens += m.tokens || 0;
+          t.inputTokens += m.inputTokens || 0;
+          t.outputTokens += m.outputTokens || 0;
+          t.cost += m.cost || 0;
+          cur.byModel[mk] = t;
+        }
+        archiveMap.set(a.month, cur);
+      };
+      for (const src of allSources) {
+        for (const a of (src as any).archives || []) addArchive(a);
+      }
+      const mergedArchives = Array.from(archiveMap.values()).sort((x, y) => (x.month < y.month ? -1 : 1));
+
       // Settings：取 settingsUpdatedAt 最大者，再与默认值合并
       let bestSettingsSrc: Partial<PluginData> = allSources[0];
       for (const src of allSources) {
@@ -336,8 +371,12 @@ export class Store {
         deletedKeys: Array.from(deletedSet),
         apiKeys: finalMigratedKeys,
         records: trimmedRecords,
+        archives: mergedArchives,
         settings: migratedSettings,
       };
+
+      // 跨来源合并后再次执行滚动淘汰（极端情况下合并结果仍可能超过上限），顺带归档
+      this.enforceRetention();
 
       console.log(
         `[TokenStats] Loaded (merged ${allSources.length} source(s), fileSources=${fileSources.length}, localStorage=${!!lsData}): ${this.data.apiKeys.length} keys, ${this.data.records.length} records.`
@@ -355,7 +394,8 @@ export class Store {
     }
   }
 
-  /** 防抖保存：写文件（官方 API）+ 立即写 localStorage 镜像。
+  /** 防抖保存：仅异步写文件（官方 API）。localStorage 镜像不在此同步写入，
+   *  改由 10s 心跳与卸载时兜底，避免高频调用时全量序列化阻塞主线程。
    *  未加载完成前不写入，避免用空数据覆盖已有文件。force 用于显式清空/重置。 */
   scheduleSave(delay = 500, force = false): void {
     if (!this.loaded) {
@@ -420,14 +460,11 @@ export class Store {
       } catch {
         // 备份失败不影响主流程
       }
-      // localStorage 镜像
-      try {
-        localStorage.setItem(LS_KEY, JSON.stringify(this.data));
-      } catch {
-        // localStorage 写入失败（可能空间不足）
-      }
+      // localStorage 镜像不在成功路径同步写入：高频保存时全量序列化会阻塞主线程，
+      // 镜像改由 10s 心跳 saveToLocalStorage() 与卸载时兜底维护。
     } catch (e) {
       console.error("[TokenStats] Failed to save data:", e);
+      // 文件写入失败时，退回同步写一次 localStorage 作兜底（异常低频路径，可接受）
       try {
         localStorage.setItem(LS_KEY, JSON.stringify(this.data));
       } catch {
@@ -492,18 +529,8 @@ export class Store {
     }
   }
 
-  // ─── API Key CRUD ───
+  // ─── 云同步合并 ───
 
-  /**
-   * 云同步合并：从磁盘重新读取数据文件（已被同步覆盖），
-   * 与内存中的数据按 ID 合并，避免多设备数据冲突丢失。
-   *
-   * 合并策略：
-   * - Records: 按 ID 取并集，去重后按时间戳排序
-   * - API Keys: 按 ID 取并集；同 ID 冲突时取 lastSavedAt 较大方的版本
-   * - Settings: 取 lastSavedAt 较大方的版本
-   * - lastSavedAt: 取两者最大值
-   */
   /**
    * 云同步合并：从磁盘重新读取数据文件（已被同步覆盖），
    * 与内存中的数据按 ID 合并，避免多设备数据冲突丢失。
@@ -569,12 +596,43 @@ export class Store {
       const mergedRecords = Array.from(recordMap.values()).sort(
         (a, b) => a.timestamp - b.timestamp
       );
-      // 裁剪到 maxRecords
+      // 裁剪到 maxRecords（裁剪前先归档被淘汰的旧记录；本地与远程的归档按月合并）
       const max = local.settings.maxRecords;
       const trimmedRecords =
         mergedRecords.length > max
           ? mergedRecords.slice(-max)
           : mergedRecords;
+
+      const archiveMap = new Map<string, MonthArchive>();
+      const addArchive = (a: MonthArchive) => {
+        if (!a || !a.month) return;
+        const cur = archiveMap.get(a.month) || {
+          month: a.month, count: 0, totalTokens: 0, totalInputTokens: 0,
+          totalOutputTokens: 0, totalCacheReadTokens: 0, exactTokens: 0,
+          estimatedTokens: 0, cost: 0, cacheCost: 0, byModel: {},
+        };
+        cur.count += a.count || 0;
+        cur.totalTokens += a.totalTokens || 0;
+        cur.totalInputTokens += a.totalInputTokens || 0;
+        cur.totalOutputTokens += a.totalOutputTokens || 0;
+        cur.totalCacheReadTokens += a.totalCacheReadTokens || 0;
+        cur.exactTokens += a.exactTokens || 0;
+        cur.estimatedTokens += a.estimatedTokens || 0;
+        cur.cost += a.cost || 0;
+        cur.cacheCost += a.cacheCost || 0;
+        for (const [mk, m] of Object.entries(a.byModel || {})) {
+          const t = cur.byModel[mk] || { tokens: 0, inputTokens: 0, outputTokens: 0, cost: 0 };
+          t.tokens += m.tokens || 0;
+          t.inputTokens += m.inputTokens || 0;
+          t.outputTokens += m.outputTokens || 0;
+          t.cost += m.cost || 0;
+          cur.byModel[mk] = t;
+        }
+        archiveMap.set(a.month, cur);
+      };
+      for (const a of (local.archives || [])) addArchive(a);
+      for (const a of (remote.archives || [])) addArchive(a);
+      const mergedArchives = Array.from(archiveMap.values()).sort((x, y) => (x.month < y.month ? -1 : 1));
 
       // ── 合并 API Keys：按 ID 并集，冲突按 keysUpdatedAt 取较新方 ──
       const remoteKeys = remote.apiKeys || [];
@@ -616,8 +674,12 @@ export class Store {
         deletedKeys: mergedDeleted,
         apiKeys: mergedKeys,
         records: trimmedRecords,
+        archives: mergedArchives,
         settings: mergedSettings,
       };
+
+      // 合并后再次滚动淘汰（合并结果可能超过上限），顺带归档被淘汰的旧记录
+      this.enforceRetention();
 
       // 保存合并后的数据（会更新 lastSavedAt）
       await this.save();
@@ -696,16 +758,77 @@ export class Store {
       record.cost = this.calcCost(record.model, record.inputTokens, record.outputTokens, record.cacheReadTokens);
     }
     recs.push(record);
-    // 超出上限时裁剪旧记录
-    const max = this.data.settings.maxRecords;
-    if (recs.length > max) {
-      this.data.records = recs.slice(-max);
-    }
+    // 超出上限时滚动淘汰旧记录，并将被淘汰的更早月份聚合进归档（避免历史数据丢失）
+    this.enforceRetention();
     this.scheduleSave();
   }
 
   getRecords(): TokenRecord[] {
     return this.data.records;
+  }
+
+  /** 获取按月聚合的归档汇总（超出明细上限被滚动淘汰的旧月份） */
+  getArchives(): MonthArchive[] {
+    return this.data.archives || [];
+  }
+
+  /**
+   * 滚动淘汰：明细记录超过 maxRecords 时，保留最近 max 条，
+   * 将被淘汰的更早记录按月份聚合进 archives（同一月份累加）。不触发保存，由调用方决定。
+   */
+  private enforceRetention(): void {
+    const recs = this.data.records;
+    const max = this.data.settings.maxRecords || 5000;
+    if (recs.length <= max) return;
+    recs.sort((a, b) => a.timestamp - b.timestamp);
+    const evicted = recs.slice(0, recs.length - max);
+    const keep = recs.slice(recs.length - max);
+    this.data.records = keep;
+    if (evicted.length > 0) this.aggregateIntoArchives(evicted);
+  }
+
+  /** 将被淘汰的记录按月份聚合，合并进 this.data.archives（同月累加） */
+  private aggregateIntoArchives(evicted: TokenRecord[]): void {
+    if (!Array.isArray(this.data.archives)) this.data.archives = [];
+    const map = new Map<string, MonthArchive>();
+    for (const a of this.data.archives) map.set(a.month, a);
+    for (const r of evicted) {
+      const d = new Date(r.timestamp);
+      const month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      let agg = map.get(month);
+      if (!agg) {
+        agg = {
+          month,
+          count: 0,
+          totalTokens: 0,
+          totalInputTokens: 0,
+          totalOutputTokens: 0,
+          totalCacheReadTokens: 0,
+          exactTokens: 0,
+          estimatedTokens: 0,
+          cost: 0,
+          cacheCost: 0,
+          byModel: {},
+        };
+        map.set(month, agg);
+      }
+      agg.count += 1;
+      agg.totalTokens += r.totalTokens;
+      agg.totalInputTokens += r.inputTokens;
+      agg.totalOutputTokens += r.outputTokens;
+      agg.totalCacheReadTokens += r.cacheReadTokens || 0;
+      if (r.estimated === false) agg.exactTokens += r.totalTokens;
+      else agg.estimatedTokens += r.totalTokens;
+      agg.cost += this.getRecordCost(r);
+      agg.cacheCost += this.getRecordCacheCost(r);
+      const mk = (r.model || "unknown").toLowerCase().trim();
+      if (!agg.byModel[mk]) agg.byModel[mk] = { tokens: 0, inputTokens: 0, outputTokens: 0, cost: 0 };
+      agg.byModel[mk].tokens += r.totalTokens;
+      agg.byModel[mk].inputTokens += r.inputTokens;
+      agg.byModel[mk].outputTokens += r.outputTokens;
+      agg.byModel[mk].cost += this.getRecordCost(r);
+    }
+    this.data.archives = Array.from(map.values()).sort((a, b) => (a.month < b.month ? -1 : 1));
   }
 
   getRecentRecords(limit = 50): TokenRecord[] {
@@ -755,25 +878,31 @@ export class Store {
     return (model || "").toLowerCase().trim().replace(/[\s\-_]+/g, "");
   }
 
-  /** 获取某模型的单价配置（未配置返回 null）。
+  /** 解析某模型的单价配置及来源（来自资源包还是单模型单价）。
    *  优先级：单模型单价(modelPrices) > 资源包(pricePacks，按包内模型列表匹配)。 */
-  getModelPrice(model: string): ModelPrice | null {
+  private resolvePrice(model: string): { price: ModelPrice | null; fromPack: boolean } {
     const key = this.normalizeModelKey(model);
-    if (!key) return null;
+    if (!key) return { price: null, fromPack: false };
     const map = this.data.settings.modelPrices || {};
-    if (map[key]) return map[key];
+    if (map[key]) return { price: map[key], fromPack: false };
     const pack = this.findPackForModel(key);
     if (pack) {
       // 打包价模式：按 (totalPrice / totalTokens) 算等效每 token 单价，统一应用到输入/输出/缓存
       if (pack.totalPrice && pack.totalPrice > 0 && pack.totalTokens > 0) {
         const perToken = pack.totalPrice / pack.totalTokens;
         const per1K = perToken * 1000;
-        return { input: per1K, output: per1K, cacheRead: per1K };
+        return { price: { input: per1K, output: per1K, cacheRead: per1K }, fromPack: true };
       }
       // 逐项单价模式
-      return { input: pack.input, output: pack.output, ...(pack.cacheRead ? { cacheRead: pack.cacheRead } : {}) };
+      return { price: { input: pack.input, output: pack.output, ...(pack.cacheRead ? { cacheRead: pack.cacheRead } : {}) }, fromPack: true };
     }
-    return null;
+    return { price: null, fromPack: false };
+  }
+
+  /** 获取某模型的单价配置（未配置返回 null）。
+   *  优先级：单模型单价(modelPrices) > 资源包(pricePacks，按包内模型列表匹配)。 */
+  getModelPrice(model: string): ModelPrice | null {
+    return this.resolvePrice(model).price;
   }
 
   /** 查找涵盖指定模型的资源包（按归一化模型名精确匹配包内 models 列表） */
@@ -797,24 +926,61 @@ export class Store {
   /**
    * 计算单次调用的估算费用（货币单位）。
    * 未配置该模型单价时返回 0。
+   * 资源包模式下若关闭「缓存命中计费」（settings.packCountCacheRead=false），
+   * 缓存命中部分不计费，避免大量命中缓存时费用高估。
    */
   calcCost(model: string, inputTokens: number, outputTokens: number, cacheReadTokens?: number): number {
-    const price = this.getModelPrice(model);
+    const { price, fromPack } = this.resolvePrice(model);
     if (!price) return 0;
     const inputCost = (inputTokens / 1000) * price.input;
     const outputCost = (outputTokens / 1000) * price.output;
     let total = inputCost + outputCost;
     // 缓存命中 tokens 按独立折扣单价计费（若已配置）
     if (price.cacheRead && cacheReadTokens && cacheReadTokens > 0) {
-      total += (cacheReadTokens / 1000) * price.cacheRead;
+      // 资源包模式下受「缓存命中是否计费」开关控制
+      const countCache = !fromPack || this.data.settings.packCountCacheRead !== false;
+      if (countCache) {
+        total += (cacheReadTokens / 1000) * price.cacheRead;
+      }
     }
     return total;
+  }
+
+  /**
+   * 计算单次调用的缓存命中部分费用（货币单位，不含输入/输出）。
+   * 用于看板单独展示缓存命中成本。未配置缓存单价或资源包关闭缓存计费时返回 0。
+   */
+  calcCacheCost(model: string, cacheReadTokens?: number): number {
+    if (!cacheReadTokens || cacheReadTokens <= 0) return 0;
+    const { price, fromPack } = this.resolvePrice(model);
+    if (!price || !price.cacheRead) return 0;
+    if (fromPack && this.data.settings.packCountCacheRead === false) return 0;
+    return (cacheReadTokens / 1000) * price.cacheRead;
   }
 
   /** 格式化费用显示，如 ¥0.0123 */
   formatCost(cost: number): string {
     const cur = this.getCurrency();
     return `${cur}${cost.toFixed(4)}`;
+  }
+
+  /**
+   * 获取某条记录应显示的缓存命中部分费用。
+   * - 开启「单价变更后自动重算」（默认）：始终按当前单价实时计算；
+   * - 关闭：若记录有费用快照 record.cost，则用快照减去输入/输出费用近似缓存成本；
+   *   否则回退实时计算（此场景旧记录缓存成本可能略有偏差，属可接受近似）。
+   */
+  getRecordCacheCost(r: TokenRecord): number {
+    const live = this.calcCacheCost(r.model, r.cacheReadTokens);
+    if (this.data.settings.recalcCostOnPriceChange !== false) {
+      return live;
+    }
+    if (typeof r.cost === "number") {
+      // 快照模式下，缓存成本 = 快照费用 - 实时输入/输出费用（近似）
+      const baseCost = this.calcCost(r.model, r.inputTokens, r.outputTokens, 0);
+      return Math.max(0, r.cost - baseCost);
+    }
+    return live;
   }
 
   /**

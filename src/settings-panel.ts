@@ -645,6 +645,7 @@ export class SettingsPanel {
     const container = dialog.element.querySelector("#tks-price-editor") as HTMLElement;
     if (!container) return;
     const recalc = this.store.getSettings().recalcCostOnPriceChange !== false;
+    const packCountCache = this.store.getSettings().packCountCacheRead !== false;
 
     const makeRow = (model: string, input: number, output: number, cacheRead?: number): string => `
       <div class="tks-price-row">
@@ -701,6 +702,10 @@ export class SettingsPanel {
       <div class="tks-price-opt">
         <label class="tks-price-opt-label"><input type="checkbox" id="tks-price-recalc" ${recalc ? "checked" : ""} /> 单价变更后自动重算历史费用</label>
         <span class="tks-price-opt-hint">开启后仪表盘与记录费用随单价实时更新；关闭则每条记录的费用在生成时固定，不再随单价变化。</span>
+      </div>
+      <div class="tks-price-opt">
+        <label class="tks-price-opt-label"><input type="checkbox" id="tks-price-packcache" ${packCountCache ? "checked" : ""} /> 资源包模式下缓存命中计入费用</label>
+        <span class="tks-price-opt-hint">默认开启。关闭后，由资源包（逐项或打包价模式）匹配到的请求，其缓存命中 tokens 不再计入费用估算，可避免「大量命中缓存」场景下费用被高估；单模型单价配置不受此开关影响。</span>
       </div>
       <div class="tks-price-section-title">按模型单价（模型名不区分大小写，保存时自动归一化为小写）</div>
       <div class="tks-price-header">
@@ -811,7 +816,8 @@ export class SettingsPanel {
       });
       const cur = (container.querySelector("#tks-price-currency") as HTMLSelectElement)?.value || "¥";
       const recalc = (container.querySelector("#tks-price-recalc") as HTMLInputElement)?.checked ?? true;
-      this.store.updateSettings({ currency: cur, modelPrices: finalPrices, pricePacks: finalPacks, recalcCostOnPriceChange: recalc });
+      const packCountCache = (container.querySelector("#tks-price-packcache") as HTMLInputElement)?.checked ?? true;
+      this.store.updateSettings({ currency: cur, modelPrices: finalPrices, pricePacks: finalPacks, recalcCostOnPriceChange: recalc, packCountCacheRead: packCountCache });
       this.store.save();
       dialog.destroy();
       showMessage("费用配置已保存", 2000, "info");
