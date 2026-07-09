@@ -13,6 +13,9 @@ import type { KeyManager } from "./key-manager";
 import type { TokenCounter } from "./token-counter";
 import type { AiCallInfo, ApiKeyConfig, PluginSettings, TokenRecord } from "./types";
 
+// 0-token 告警节流：避免异常 provider 下每请求刷屏
+let lastZeroTokenWarnTs = 0;
+
 /** 从 HeadersInit 中安全提取 header 值 */
 function getHeader(headers: HeadersInit | undefined, name: string): string | null {
   if (!headers) return null;
@@ -1455,7 +1458,11 @@ export class Interceptor {
     this.store.addRecord(record);
     this.logDebug(`Recorded: ${record.apiKeyName} | ${record.model} | in=${inputTokens} out=${outputTokens} cache=${cacheReadTokens ?? 0} total=${record.totalTokens} success=${success}`);
     if (success && inputTokens === 0 && outputTokens === 0) {
-      console.warn("[TokenStats] 本次请求 token 计数为 0。若持续出现，请在设置中开启“启用调试日志”，并在浏览器控制台中查看请求/响应详情。");
+      const now = Date.now();
+      if (now - lastZeroTokenWarnTs > 60000) {
+        lastZeroTokenWarnTs = now;
+        console.warn("[TokenStats] 本次请求 token 计数为 0。若持续出现，请在设置中开启“启用调试日志”，并在浏览器控制台中查看请求/响应详情。");
+      }
     }
   }
 

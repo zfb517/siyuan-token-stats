@@ -242,7 +242,6 @@ export class Dashboard {
             cacheCost: 0,
           };
         }
-        summary.modelStats[mk].count += 0; // 归档按模型只聚合 token/费用，不重复计请求数
         summary.modelStats[mk].tokens += m.tokens;
         summary.modelStats[mk].inputTokens += m.inputTokens;
         summary.modelStats[mk].outputTokens += m.outputTokens;
@@ -833,6 +832,8 @@ export class Dashboard {
       lines.push(`# 总费用,${cur}${summary.totalCost.toFixed(4)}`);
     }
     lines.push(`# 记录数,${records.length}`);
+    const archivesForCsv = this.store.getArchives();
+    if (archivesForCsv.length > 0) lines.push(`# 归档月份数,${archivesForCsv.length}`);
     // 表头
     lines.push(["时间", "模型", "输入Token", "缓存命中Token", "输出Token", "总计Token", "费用", "缓存成本", "Key名称", "耗时(ms)", "成功"].join(","));
     // 数据行
@@ -853,6 +854,22 @@ export class Dashboard {
         keyName,
         r.requestTime,
         r.success ? "是" : "否",
+      ].map(escapeCsv).join(","));
+    }
+    // 归档月份汇总行：保证「总计」= 各明细行之和（与仪表盘口径一致）
+    for (const a of archivesForCsv) {
+      lines.push([
+        `${a.month} (归档)`,
+        "归档(按月聚合)",
+        a.totalInputTokens,
+        a.totalCacheReadTokens,
+        a.totalOutputTokens,
+        a.totalTokens,
+        cur + a.cost.toFixed(4),
+        cur + a.cacheCost.toFixed(4),
+        "",
+        "",
+        "—",
       ].map(escapeCsv).join(","));
     }
     // 加 BOM 头，保证 Excel 正确识别 UTF-8 中文

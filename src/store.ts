@@ -1009,6 +1009,15 @@ export class Store {
         used += (r.inputTokens || 0) + (r.outputTokens || 0);
       }
     }
+    // 资源包额度需与仪表盘「总计」口径一致：明细被按月归档后，归档中的同模型用量也应计入已用。
+    // 注意归档 byModel 的 key 仅 lowercase+trim，需再用 normalizeModelKey 归一化才能与包内模型匹配。
+    for (const a of this.data.archives || []) {
+      for (const [mk, m] of Object.entries(a.byModel || {})) {
+        if (models.has(this.normalizeModelKey(mk))) {
+          used += (m.inputTokens || 0) + (m.outputTokens || 0);
+        }
+      }
+    }
     return { usedTokens: used };
   }
 
