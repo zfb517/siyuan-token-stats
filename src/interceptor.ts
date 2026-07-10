@@ -814,11 +814,16 @@ export class Interceptor {
     let inputTokens = 0;
     let outputTokens = 0;
     let cacheReadTokens: number | undefined;
+    let cacheCreationTokens: number | undefined;
     let model = aiCall.model;
     // 是否为启发式估算：默认 true；当从 API 响应 usage 提取到精确 token 时置 false
     let estimated = true;
     // 诊断模式：原始 usage 对象（来自供应商响应，未裁剪），无则为 undefined
     let rawUsage: Record<string, unknown> | undefined;
+    // 推理(reasoning/thinking) token 数（仅 SSE 流式路径可分离，其余路径为 undefined）
+    let reasoningTokens: number | undefined;
+    // 本次请求是否含图像/音频等多模态输入（仅用于「无 usage 兜底估算」时提示输入可能被低估）
+    const multimodal = this.tokenCounter.hasMultimodal(this.extractMessages(parsedBody));
     // 笔记归因：从请求体 references 提取的来源信息
     const attribution = this.extractAttribution(parsedBody);
 
@@ -846,7 +851,7 @@ export class Interceptor {
       this.logDebug("analyzeResponse: response body is null, using input estimate only");
       inputTokens = estimatedInput;
       outputTokens = 0;
-      this.recordCall(aiCall, inputTokens, outputTokens, startTime, success, model, undefined, true);
+      this.recordCall(aiCall, inputTokens, outputTokens, startTime, success, model, undefined, true, undefined, undefined, undefined, undefined, false);
       return;
     }
 
@@ -857,12 +862,14 @@ export class Interceptor {
         inputTokens = result.inputTokens;
         outputTokens = result.outputTokens;
         cacheReadTokens = result.cacheReadTokens;
+        cacheCreationTokens = result.cacheCreationTokens;
         estimated = result.estimated;
         if (result.model) model = result.model;
         if (result.aborted) {
           success = false;
         }
         if (result.rawUsage) rawUsage = result.rawUsage;
+        if (result.reasoningTokens) reasoningTokens = result.reasoningTokens;
       } else if (contentType.includes("application/json") || contentType.includes("text/json")) {
         // JSON 响应：先读取文本，再解析，失败时仍可估算
         const text = await response.text();
@@ -881,6 +888,7 @@ export class Interceptor {
           inputTokens = usage.inputTokens;
           outputTokens = usage.outputTokens;
           cacheReadTokens = usage.cacheReadTokens || undefined;
+          cacheCreationTokens = usage.cacheCreationTokens || undefined;
           if (data?.usage) rawUsage = data.usage;
         }
         if (data?.model) {
@@ -901,6 +909,7 @@ export class Interceptor {
         inputTokens = result.inputTokens;
         outputTokens = result.outputTokens;
         cacheReadTokens = result.cacheReadTokens;
+        cacheCreationTokens = result.cacheCreationTokens;
         estimated = result.estimated;
         if (result.model) model = result.model;
         if (result.aborted) success = false;
@@ -952,7 +961,7 @@ export class Interceptor {
 
     // 记录本次调用（无论 token 是否为 0，都需记录以反映真实请求量）
     const totalTokens = inputTokens + outputTokens;
-    this.recordCall(aiCall, inputTokens, outputTokens, startTime, success, model, cacheReadTokens, estimated, rawUsage, attribution);
+    this.recordCall(aiCall, inputTokens, outputTokens, startTime, success, model, cacheReadTokens, estimated, rawUsage, attribution, reasoningTokens, cacheCreationTokens, multimodal && estimated);
 
     // 检查阈值（全局 + 单 Key）— 仅在有实际 token 消耗时检查，避免 0-token 请求触发误报
     if (totalTokens > 0 && settings.showNotifications) {
@@ -975,12 +984,15 @@ export class Interceptor {
     inputTokens: number;
     outputTokens: number;
     cacheReadTokens?: number;
+    cacheCreationTokens?: number;
     model?: string;
     aborted: boolean;
     /** 诊断模式：原始 usage 对象（如有） */
     rawUsage?: Record<string, unknown>;
     /** 是否来自启发式估算（无 usage 时为 true） */
     estimated: boolean;
+    /** 推理(reasoning/thinking) token 数（插件从 SSE 中间事件累加估算，用于从 completionTokens 中分离） */
+    reasoningTokens?: number;
   }> {
     const reader = response.body?.getReader();
     if (!reader) return { inputTokens: 0, outputTokens: 0, aborted: false, estimated: true };
@@ -990,7 +1002,8 @@ export class Interceptor {
     // 使用容器对象避免 TypeScript 闭包类型 narrowing 问题
     const state = {
       fullContent: "",
-      usage: null as { inputTokens: number; outputTokens: number; cacheReadTokens: number } | null,
+      reasoningText: "",
+      usage: null as { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number } | null,
       model: undefined as string | undefined,
       rawUsage: undefined as Record<string, unknown> | undefined,
     };
@@ -1021,6 +1034,14 @@ export class Interceptor {
         const chunk = JSON.parse(dataStr);
         this.logDebug("SSE parsed chunk", { eventType, chunk });
         if (typeof chunk !== "object" || chunk === null) return;
+        // 累加推理(reasoning/thinking)文本，用于从 completionTokens 中分离推理 token。
+        // 思源智能体通过 event:reasoning(data.token) 与 event:thinking(data.reasoning) 下发中间推理内容，
+        // 而最终正式输出走 event:content(data.token)，二者字段名相同但事件类型不同，故按 eventType 区分。
+        if (eventType === "reasoning" && typeof chunk.token === "string") {
+          state.reasoningText += chunk.token;
+        } else if (eventType === "thinking" && typeof chunk.reasoning === "string") {
+          state.reasoningText += chunk.reasoning;
+        }
         const collected = this.collectChunkInfo(chunk, state.usage, state.model, state.fullContent, eventType);
         const prevLen = state.fullContent.length;
         state.usage = this.mergeUsage(state.usage, collected.usage);
@@ -1114,10 +1135,12 @@ export class Interceptor {
         inputTokens: state.usage.inputTokens || estimatedInput,
         outputTokens: state.usage.outputTokens || estimatedOutput,
         cacheReadTokens: state.usage.cacheReadTokens || undefined,
+        cacheCreationTokens: state.usage.cacheCreationTokens || undefined,
         model: state.model,
         aborted,
         rawUsage: state.rawUsage,
         estimated: false,
+        reasoningTokens: this.tokenCounter.estimateFromText(state.reasoningText) || undefined,
       };
     }
 
@@ -1130,6 +1153,7 @@ export class Interceptor {
       aborted,
       rawUsage: state.rawUsage,
       estimated: true,
+      reasoningTokens: this.tokenCounter.estimateFromText(state.reasoningText) || undefined,
     };
   }
 
@@ -1153,26 +1177,27 @@ export class Interceptor {
    * 也避免较小值覆盖较大值（usage 事件常为累计 / 终值）。
    */
   private mergeUsage(
-    existing: { inputTokens: number; outputTokens: number; cacheReadTokens: number } | null,
-    incoming: { inputTokens: number; outputTokens: number; cacheReadTokens: number } | null
-  ): { inputTokens: number; outputTokens: number; cacheReadTokens: number } | null {
+    existing: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number } | null,
+    incoming: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number } | null
+  ): { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number } | null {
     if (!incoming) return existing;
     if (!existing) return incoming;
     return {
       inputTokens: Math.max(existing.inputTokens, incoming.inputTokens),
       outputTokens: Math.max(existing.outputTokens, incoming.outputTokens),
       cacheReadTokens: Math.max(existing.cacheReadTokens || 0, incoming.cacheReadTokens || 0),
+      cacheCreationTokens: Math.max(existing.cacheCreationTokens || 0, incoming.cacheCreationTokens || 0),
     };
   }
 
   private collectChunkInfo(
     chunk: any,
-    usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number } | null,
+    usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number } | null,
     model: string | undefined,
     fullContent: string,
     eventType: string = ""
   ): {
-    usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number } | null;
+    usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number } | null;
     model: string | undefined;
     fullContent: string;
     /** 最近一次解析到的原始 usage 对象（来自供应商响应，未裁剪），用于诊断模式导出；无则为 undefined */
@@ -1222,7 +1247,7 @@ export class Interceptor {
         // 部分供应商（如 SiliconFlow）返回的 promptTokens 为累计/错误值，会夸大数十至数百倍，
         // 仅当 lastPromptTokens 缺失或异常（> promptTokens）时回退到 promptTokens。
         const inputTokens = lastPromptTokens > 0 && (promptTokens === 0 || lastPromptTokens <= promptTokens) ? lastPromptTokens : promptTokens;
-        usage = { inputTokens, outputTokens: completionTokens, cacheReadTokens: chunk.cachedTokens ?? chunk.cacheReadTokens ?? chunk.cachedInputTokens ?? 0 };
+        usage = { inputTokens, outputTokens: completionTokens, cacheReadTokens: chunk.cachedTokens ?? chunk.cacheReadTokens ?? chunk.cachedInputTokens ?? 0, cacheCreationTokens: 0 };
         rawUsage = chunk;
       }
       return { usage, model, fullContent, rawUsage };
@@ -1242,10 +1267,13 @@ export class Interceptor {
       const cacheReadTokens =
         u.cached_input_tokens ?? u.cache_read_input_tokens ??
         u.prompt_tokens_details?.cached_tokens ?? 0;
+      const cacheCreationTokens =
+        u.cache_creation_input_tokens ?? u.cache_creation_tokens ?? 0;
       usage = {
         inputTokens: u.prompt_tokens ?? u.input_tokens ?? u.promptTokens ?? 0,
         outputTokens: u.completion_tokens ?? u.output_tokens ?? u.completionTokens ?? 0,
         cacheReadTokens,
+        cacheCreationTokens,
       };
       rawUsage = chunk.usage;
     }
@@ -1280,10 +1308,12 @@ export class Interceptor {
     if (chunk.message?.usage) {
       const u = chunk.message.usage;
       const cacheReadTokens = u.cache_read_input_tokens ?? 0;
+      const cacheCreationTokens = u.cache_creation_input_tokens ?? 0;
       usage = {
         inputTokens: u.input_tokens ?? 0,
         outputTokens: u.output_tokens ?? 0,
         cacheReadTokens,
+        cacheCreationTokens,
       };
       rawUsage = chunk.message.usage;
     }
@@ -1323,6 +1353,7 @@ export class Interceptor {
         inputTokens: u.prompt_tokens ?? u.input_tokens ?? 0,
         outputTokens: u.completion_tokens ?? u.output_tokens ?? 0,
         cacheReadTokens: u.cached_input_tokens ?? u.cache_read_input_tokens ?? 0,
+        cacheCreationTokens: u.cache_creation_input_tokens ?? 0,
       };
       rawUsage = chunk.data.usage;
     }
@@ -1349,6 +1380,7 @@ export class Interceptor {
     inputTokens: number;
     outputTokens: number;
     cacheReadTokens?: number;
+    cacheCreationTokens?: number;
     model?: string;
     aborted: boolean;
     /** 诊断模式：原始 usage 对象（如有） */
@@ -1362,7 +1394,7 @@ export class Interceptor {
     const decoder = new TextDecoder();
     let buffer = "";
     let fullContent = "";
-    let usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number } | null = null;
+    let usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number } | null = null;
     let model: string | undefined;
     let aborted = false;
     let rawUsage: Record<string, unknown> | undefined;
@@ -1444,6 +1476,7 @@ export class Interceptor {
         inputTokens: usage.inputTokens || estimatedInput,
         outputTokens: usage.outputTokens || estimatedOutput,
         cacheReadTokens: usage.cacheReadTokens || undefined,
+        cacheCreationTokens: usage.cacheCreationTokens || undefined,
         model,
         aborted,
         rawUsage,
@@ -1461,7 +1494,7 @@ export class Interceptor {
   }
 
   /** 从 JSON 响应中提取 usage */
-  private extractUsage(data: any): { inputTokens: number; outputTokens: number; cacheReadTokens: number } | null {
+  private extractUsage(data: any): { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number } | null {
     // 标准 OpenAI / Anthropic 格式：usage 子对象
     if (data?.usage) {
       const u = data.usage;
@@ -1473,10 +1506,14 @@ export class Interceptor {
       const cacheReadTokens =
         u.cached_input_tokens ?? u.cache_read_input_tokens ??
         u.prompt_tokens_details?.cached_tokens ?? 0;
-      if (inputTokens === 0 && outputTokens === 0 && cacheReadTokens === 0) return null;
-      return { inputTokens, outputTokens, cacheReadTokens };
+      // 缓存写入 tokens：Anthropic cache_creation_input_tokens（将上下文写入 Prompt Cache，按更高单价计费）
+      const cacheCreationTokens =
+        u.cache_creation_input_tokens ?? u.cache_creation_tokens ?? 0;
+      if (inputTokens === 0 && outputTokens === 0 && cacheReadTokens === 0 && cacheCreationTokens === 0) return null;
+      return { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens };
     }
     // 思源智能体 usage 事件格式：顶层 promptTokens / completionTokens
+    // 注意：思源仅在 usage 事件中下发 cachedTokens（缓存命中），不暴露缓存写入 tokens，故此处 cacheCreationTokens 恒为 0
     if (data?.promptTokens !== undefined || data?.completionTokens !== undefined) {
       const promptTokens = data.promptTokens ?? 0;
       const lastPromptTokens = data.lastPromptTokens ?? 0;
@@ -1485,7 +1522,7 @@ export class Interceptor {
       const outputTokens = data.completionTokens ?? 0;
       const cacheReadTokens = data.cachedTokens ?? data.cacheReadTokens ?? data.cachedInputTokens ?? 0;
       if (inputTokens === 0 && outputTokens === 0) return null;
-      return { inputTokens, outputTokens, cacheReadTokens };
+      return { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens: 0 };
     }
     return null;
   }
@@ -1591,7 +1628,10 @@ export class Interceptor {
     cacheReadTokens?: number,
     estimated: boolean = true,
     rawUsage?: Record<string, unknown>,
-    attribution?: { notebookId?: string; docId?: string; docPath?: string; blockIds?: string[] }
+    attribution?: { notebookId?: string; docId?: string; docPath?: string; blockIds?: string[] },
+    reasoningTokens?: number,
+    cacheCreationTokens?: number,
+    multimodalEstimated?: boolean
   ): void {
     const finalModel = this.resolveModelName(model || aiCall.model, aiCall);
     const record: TokenRecord = {
@@ -1603,12 +1643,15 @@ export class Interceptor {
       inputTokens,
       outputTokens,
       cacheReadTokens,
+      cacheCreationTokens,
       totalTokens: inputTokens + outputTokens,
       timestamp: startTime,
       requestTime: Date.now() - startTime,
       success,
       estimated,
       rawUsage,
+      reasoningTokens,
+      multimodalEstimated,
       notebookId: attribution?.notebookId,
       docId: attribution?.docId,
       docPath: attribution?.docPath,

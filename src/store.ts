@@ -31,6 +31,7 @@ const DEFAULT_SETTINGS: PluginSettings = {
   showTopBarBadge: true,
   maxRecords: 5000,
   packCountCacheRead: true,
+  countReasoningInOutput: true,
   globalQuotaLimit: 0,
   globalAlertThreshold: 0,
   globalQuotaResetCycle: "monthly",
@@ -313,7 +314,8 @@ export class Store {
         if (!a || !a.month) return;
         const cur = archiveMap.get(a.month) || {
           month: a.month, count: 0, totalTokens: 0, totalInputTokens: 0,
-          totalOutputTokens: 0, totalCacheReadTokens: 0, exactTokens: 0,
+          totalOutputTokens: 0, totalCacheReadTokens: 0, totalCacheCreationTokens: 0, totalReasoningTokens: 0,
+          exactTokens: 0,
           estimatedTokens: 0, cost: 0, cacheCost: 0, byModel: {},
         };
         cur.count += a.count || 0;
@@ -321,16 +323,21 @@ export class Store {
         cur.totalInputTokens += a.totalInputTokens || 0;
         cur.totalOutputTokens += a.totalOutputTokens || 0;
         cur.totalCacheReadTokens += a.totalCacheReadTokens || 0;
+        cur.totalCacheCreationTokens += a.totalCacheCreationTokens || 0;
+        cur.totalReasoningTokens += a.totalReasoningTokens || 0;
         cur.exactTokens += a.exactTokens || 0;
         cur.estimatedTokens += a.estimatedTokens || 0;
         cur.cost += a.cost || 0;
         cur.cacheCost += a.cacheCost || 0;
         for (const [mk, m] of Object.entries(a.byModel || {})) {
-          const t = cur.byModel[mk] || { tokens: 0, inputTokens: 0, outputTokens: 0, cost: 0 };
+          const t = cur.byModel[mk] || { tokens: 0, inputTokens: 0, outputTokens: 0, cost: 0, reasoningTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
           t.tokens += m.tokens || 0;
           t.inputTokens += m.inputTokens || 0;
           t.outputTokens += m.outputTokens || 0;
           t.cost += m.cost || 0;
+          t.reasoningTokens += m.reasoningTokens || 0;
+          t.cacheReadTokens += m.cacheReadTokens || 0;
+          t.cacheCreationTokens += m.cacheCreationTokens || 0;
           cur.byModel[mk] = t;
         }
         archiveMap.set(a.month, cur);
@@ -622,7 +629,8 @@ export class Store {
         if (!a || !a.month) return;
         const cur = archiveMap.get(a.month) || {
           month: a.month, count: 0, totalTokens: 0, totalInputTokens: 0,
-          totalOutputTokens: 0, totalCacheReadTokens: 0, exactTokens: 0,
+          totalOutputTokens: 0, totalCacheReadTokens: 0, totalCacheCreationTokens: 0, totalReasoningTokens: 0,
+          exactTokens: 0,
           estimatedTokens: 0, cost: 0, cacheCost: 0, byModel: {},
         };
         cur.count += a.count || 0;
@@ -630,16 +638,21 @@ export class Store {
         cur.totalInputTokens += a.totalInputTokens || 0;
         cur.totalOutputTokens += a.totalOutputTokens || 0;
         cur.totalCacheReadTokens += a.totalCacheReadTokens || 0;
+        cur.totalCacheCreationTokens += a.totalCacheCreationTokens || 0;
+        cur.totalReasoningTokens += a.totalReasoningTokens || 0;
         cur.exactTokens += a.exactTokens || 0;
         cur.estimatedTokens += a.estimatedTokens || 0;
         cur.cost += a.cost || 0;
         cur.cacheCost += a.cacheCost || 0;
         for (const [mk, m] of Object.entries(a.byModel || {})) {
-          const t = cur.byModel[mk] || { tokens: 0, inputTokens: 0, outputTokens: 0, cost: 0 };
+          const t = cur.byModel[mk] || { tokens: 0, inputTokens: 0, outputTokens: 0, cost: 0, reasoningTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
           t.tokens += m.tokens || 0;
           t.inputTokens += m.inputTokens || 0;
           t.outputTokens += m.outputTokens || 0;
           t.cost += m.cost || 0;
+          t.reasoningTokens += m.reasoningTokens || 0;
+          t.cacheReadTokens += m.cacheReadTokens || 0;
+          t.cacheCreationTokens += m.cacheCreationTokens || 0;
           cur.byModel[mk] = t;
         }
         archiveMap.set(a.month, cur);
@@ -769,7 +782,7 @@ export class Store {
     }
     // 关闭「单价变更后自动重算」时，把当前费用写入记录作为固定快照
     if (this.data.settings.recalcCostOnPriceChange === false) {
-      record.cost = this.calcCost(record.model, record.inputTokens, record.outputTokens, record.cacheReadTokens);
+      record.cost = this.calcCost(record.model, record.inputTokens, record.outputTokens, record.cacheReadTokens, record.reasoningTokens, record.cacheCreationTokens);
     }
     recs.push(record);
     // 超出上限时滚动淘汰旧记录，并将被淘汰的更早月份聚合进归档（避免历史数据丢失）
@@ -818,6 +831,8 @@ export class Store {
           totalInputTokens: 0,
           totalOutputTokens: 0,
           totalCacheReadTokens: 0,
+          totalCacheCreationTokens: 0,
+          totalReasoningTokens: 0,
           exactTokens: 0,
           estimatedTokens: 0,
           cost: 0,
@@ -831,15 +846,20 @@ export class Store {
       agg.totalInputTokens += r.inputTokens;
       agg.totalOutputTokens += r.outputTokens;
       agg.totalCacheReadTokens += r.cacheReadTokens || 0;
+      agg.totalCacheCreationTokens += r.cacheCreationTokens || 0;
+      agg.totalReasoningTokens += r.reasoningTokens || 0;
       if (r.estimated === false) agg.exactTokens += r.totalTokens;
       else agg.estimatedTokens += r.totalTokens;
       agg.cost += this.getRecordCost(r);
       agg.cacheCost += this.getRecordCacheCost(r);
       const mk = (r.model || "unknown").toLowerCase().trim();
-      if (!agg.byModel[mk]) agg.byModel[mk] = { tokens: 0, inputTokens: 0, outputTokens: 0, cost: 0 };
+      if (!agg.byModel[mk]) agg.byModel[mk] = { tokens: 0, inputTokens: 0, outputTokens: 0, cost: 0, reasoningTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
       agg.byModel[mk].tokens += r.totalTokens;
       agg.byModel[mk].inputTokens += r.inputTokens;
       agg.byModel[mk].outputTokens += r.outputTokens;
+      agg.byModel[mk].reasoningTokens += r.reasoningTokens || 0;
+      agg.byModel[mk].cacheReadTokens += r.cacheReadTokens || 0;
+      agg.byModel[mk].cacheCreationTokens += r.cacheCreationTokens || 0;
       agg.byModel[mk].cost += this.getRecordCost(r);
     }
     this.data.archives = Array.from(map.values()).sort((a, b) => (a.month < b.month ? -1 : 1));
@@ -905,10 +925,10 @@ export class Store {
       if (pack.totalPrice && pack.totalPrice > 0 && pack.totalTokens > 0) {
         const perToken = pack.totalPrice / pack.totalTokens;
         const per1K = perToken * 1000;
-        return { price: { input: per1K, output: per1K, cacheRead: per1K }, fromPack: true };
+        return { price: { input: per1K, output: per1K, cacheRead: per1K, cacheCreation: per1K }, fromPack: true };
       }
       // 逐项单价模式
-      return { price: { input: pack.input, output: pack.output, ...(pack.cacheRead ? { cacheRead: pack.cacheRead } : {}) }, fromPack: true };
+      return { price: { input: pack.input, output: pack.output, ...(pack.cacheRead ? { cacheRead: pack.cacheRead } : {}), ...(pack.cacheCreation ? { cacheCreation: pack.cacheCreation } : {}) }, fromPack: true };
     }
     return { price: null, fromPack: false };
   }
@@ -960,8 +980,11 @@ export class Store {
    * 未配置该模型单价时返回 0。
    * 资源包模式下若关闭「缓存命中计费」（settings.packCountCacheRead=false），
    * 缓存命中部分不计费，避免大量命中缓存时费用高估。
+   * reasoningTokens：推理(reasoning/thinking) token 数。当设置项 countReasoningInOutput=false 时，
+   * 可计费输出 = max(0, outputTokens - reasoningTokens)，推理部分不计入费用（适用于推理 token 单独计费或免费的商家）。
+   * 默认（countReasoningInOutput=true）推理 token 计入输出，与绝大多数商家按 completion_tokens 统一计费的口径一致。
    */
-  calcCost(model: string, inputTokens: number, outputTokens: number, cacheReadTokens?: number): number {
+  calcCost(model: string, inputTokens: number, outputTokens: number, cacheReadTokens?: number, reasoningTokens?: number, cacheCreationTokens?: number): number {
     const { price, fromPack } = this.resolvePrice(model);
     if (!price) return 0;
     // inputTokens（= lastPromptTokens）已包含缓存命中部分；缓存命中 token 按折扣价计费，
@@ -969,7 +992,10 @@ export class Store {
     const cache = cacheReadTokens && cacheReadTokens > 0 ? cacheReadTokens : 0;
     const uncachedInput = Math.max(0, inputTokens - cache);
     const inputCost = (uncachedInput / 1000) * price.input;
-    const outputCost = (outputTokens / 1000) * price.output;
+    // 可计费输出：默认含推理（与商家 completion_tokens 计费口径一致）；关闭 countReasoningInOutput 时扣除推理部分。
+    const countReasoning = this.data.settings.countReasoningInOutput !== false;
+    const billableOutput = countReasoning ? outputTokens : Math.max(0, outputTokens - (reasoningTokens || 0));
+    const outputCost = (billableOutput / 1000) * price.output;
     let total = inputCost + outputCost;
     // 缓存命中 tokens 按独立折扣单价计费（若已配置）
     if (price.cacheRead && cache > 0) {
@@ -977,6 +1003,13 @@ export class Store {
       const countCache = !fromPack || this.data.settings.packCountCacheRead !== false;
       if (countCache) {
         total += (cache / 1000) * price.cacheRead;
+      }
+    }
+    // 缓存写入 tokens（如 Anthropic Prompt Cache 创建，按 1.25x/10x 更高单价计费）：始终独立计费（不受「缓存命中计费」开关影响）
+    if (price.cacheCreation) {
+      const creation = cacheCreationTokens && cacheCreationTokens > 0 ? cacheCreationTokens : 0;
+      if (creation > 0) {
+        total += (creation / 1000) * price.cacheCreation;
       }
     }
     return total;
@@ -1023,10 +1056,10 @@ export class Store {
    */
   getRecordCost(r: TokenRecord): number {
     if (this.data.settings.recalcCostOnPriceChange !== false) {
-      return this.calcCost(r.model, r.inputTokens, r.outputTokens, r.cacheReadTokens);
+      return this.calcCost(r.model, r.inputTokens, r.outputTokens, r.cacheReadTokens, r.reasoningTokens, r.cacheCreationTokens);
     }
     if (typeof r.cost === "number") return r.cost;
-    return this.calcCost(r.model, r.inputTokens, r.outputTokens, r.cacheReadTokens);
+    return this.calcCost(r.model, r.inputTokens, r.outputTokens, r.cacheReadTokens, r.reasoningTokens, r.cacheCreationTokens);
   }
 
   /**

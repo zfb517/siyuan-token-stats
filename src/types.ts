@@ -10,6 +10,8 @@ export interface ModelPrice {
   output: number;
   /** 每 1K 缓存命中（cache_read / cached_input）tokens 价格，0 或不填表示不支持/不单独计费 */
   cacheRead?: number;
+  /** 每 1K 缓存写入（cache_creation，Anthropic 等将上下文写入缓存，通常按 1.25x/10x 计费）tokens 价格，0 或不填表示不支持/不单独计费 */
+  cacheCreation?: number;
 }
 
 /**
@@ -31,6 +33,8 @@ export interface PricePack {
   output: number;
   /** 每 1K 缓存命中 tokens 价格（可选，totalPrice > 0 时忽略） */
   cacheRead?: number;
+  /** 每 1K 缓存写入 tokens 价格（可选，totalPrice > 0 时忽略） */
+  cacheCreation?: number;
   /** 该资源包涵盖的模型名列表（保存时归一化为小写，匹配时忽略大小写） */
   models: string[];
 }
@@ -76,6 +80,8 @@ export interface TokenRecord {
   outputTokens: number;
   /** 缓存命中 tokens 数（API 返回的 cached_input_tokens / cache_read_input_tokens 等） */
   cacheReadTokens?: number;
+  /** 缓存写入 tokens 数（API 返回的 cache_creation_input_tokens，如 Anthropic 将上下文写入 Prompt Cache，按更高单价计费） */
+  cacheCreationTokens?: number;
   totalTokens: number;
   timestamp: number;
   requestTime: number;
@@ -97,6 +103,10 @@ export interface TokenRecord {
   docPath?: string;
   /** 笔记归因：涉及的块 id 列表，来自请求体 references[].id */
   blockIds?: string[];
+  /** 推理(reasoning/thinking) token 数：插件从 SSE 中间事件累加估算，用于从 completionTokens 中分离；非推理模型或未捕获时为 undefined */
+  reasoningTokens?: number;
+  /** 多模态估算标记：当本次调用含图像/音频等无法直接按文本估算的输入、且最终 token 来自启发式估算（无 API usage）时置 true，提示该记录输入量可能被低估 */
+  multimodalEstimated?: boolean;
 }
 
 /**
@@ -113,6 +123,10 @@ export interface MonthArchive {
   totalInputTokens: number;
   totalOutputTokens: number;
   totalCacheReadTokens: number;
+  /** 缓存写入 tokens 总量（从各记录 cacheCreationTokens 累加） */
+  totalCacheCreationTokens: number;
+  /** 推理 token 总量（从各记录 reasoningTokens 累加） */
+  totalReasoningTokens: number;
   /** 精确值总量（来自 API usage 的记录） */
   exactTokens: number;
   /** 启发式估算总量（无 usage 或旧版本记录） */
@@ -122,7 +136,7 @@ export interface MonthArchive {
   /** 缓存命中部分费用 */
   cacheCost: number;
   /** 按模型聚合：tokens / 输入 / 输出 / 费用 */
-  byModel: Record<string, { tokens: number; inputTokens: number; outputTokens: number; cost: number }>;
+  byModel: Record<string, { tokens: number; inputTokens: number; outputTokens: number; cost: number; reasoningTokens: number; cacheReadTokens: number; cacheCreationTokens: number }>;
 }
 
 /** 限额重置周期 */
@@ -150,6 +164,8 @@ export interface PluginSettings {
   maxRecords: number;
   /** 资源包模式下缓存命中是否计入费用：true（默认）计入；false 则资源包匹配到的请求其缓存命中 tokens 不计入费用估算，避免「大量命中缓存」场景下费用高估 */
   packCountCacheRead: boolean;
+  /** 推理(reasoning/thinking) token 是否计入输出与费用：true（默认）计入，与绝大多数商家按 completion_tokens 统一计费口径一致；false 则从可计费输出中扣除推理部分（适用于推理 token 单独计费或免费的商家） */
+  countReasoningInOutput: boolean;
   /** 全局总 Token 限额，0 = 不开启 */
   globalQuotaLimit: number;
   /** 全局总 Token 提醒阈值 (0-100)，0 = 不提醒 */
@@ -276,6 +292,8 @@ export interface StatisticsSummary {
   totalCost: number;
   /** 缓存命中 tokens 总量（API 返回的 cached_input_tokens 等） */
   totalCacheReadTokens: number;
+  /** 缓存写入 tokens 总量（API 返回的 cache_creation_input_tokens 等） */
+  totalCacheCreationTokens: number;
   /** 缓存命中部分费用（货币单位） */
   totalCacheCost: number;
   /** 精确值总量（来自 API usage 的记录 totalTokens 之和） */
@@ -297,6 +315,8 @@ export interface ModelStat {
   outputTokens: number;
   /** 缓存命中 tokens */
   cacheReadTokens: number;
+  /** 缓存写入 tokens */
+  cacheCreationTokens: number;
   /** 该模型估算费用 */
   cost: number;
   /** 该模型缓存命中部分费用 */

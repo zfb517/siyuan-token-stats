@@ -797,12 +797,14 @@ export class SettingsPanel {
     if (!container) return;
     const recalc = this.store.getSettings().recalcCostOnPriceChange !== false;
     const packCountCache = this.store.getSettings().packCountCacheRead !== false;
+    const countReasoning = this.store.getSettings().countReasoningInOutput !== false;
 
-    const makeRow = (model: string, input: number, output: number, cacheRead?: number): string => `
+    const makeRow = (model: string, input: number, output: number, cacheRead?: number, cacheCreation?: number): string => `
       <div class="tks-price-row">
         <input type="text" class="b3-text-field tks-price-model" value="${esc(model)}" placeholder="模型名（如 gpt-4o）" />
         <input type="number" step="0.0001" min="0" class="b3-text-field tks-price-input" value="${esc(String(input))}" placeholder="输入/1K" />
         <input type="number" step="0.0001" min="0" class="b3-text-field tks-price-cache" value="${esc(String(cacheRead ?? 0))}" placeholder="缓存命中/1K" />
+        <input type="number" step="0.0001" min="0" class="b3-text-field tks-price-cachecreate" value="${esc(String(cacheCreation ?? 0))}" placeholder="缓存写入/1K" title="缓存写入（如 Anthropic Prompt Cache 创建）单价，按更高倍率计费" />
         <input type="number" step="0.0001" min="0" class="b3-text-field tks-price-output" value="${esc(String(output))}" placeholder="输出/1K" />
         <button class="b3-button b3-button--small b3-button--danger tks-price-del" title="删除">✕</button>
       </div>
@@ -825,6 +827,7 @@ export class SettingsPanel {
         <input type="number" step="0.01" min="0" class="b3-text-field tks-pack-totalprice" value="${esc(String(pack.totalPrice ?? ""))}" placeholder="打包总价（¥）" title="填入后启用打包价模式：费用 = 已用 tokens / 总 tokens × 总价格，忽略下方逐项单价。留空或 0 则使用逐项单价模式。" />
         <input type="number" step="0.0001" min="0" class="b3-text-field tks-pack-input" value="${esc(String(pack.input))}" placeholder="输入单价/1K" />
         <input type="number" step="0.0001" min="0" class="b3-text-field tks-pack-cache" value="${esc(String(pack.cacheRead ?? 0))}" placeholder="缓存命中单价/1K" />
+        <input type="number" step="0.0001" min="0" class="b3-text-field tks-pack-cachecreate" value="${esc(String(pack.cacheCreation ?? 0))}" placeholder="缓存写入/1K" title="缓存写入（如 Anthropic Prompt Cache 创建）单价，按更高倍率计费" />
         <input type="number" step="0.0001" min="0" class="b3-text-field tks-pack-output" value="${esc(String(pack.output))}" placeholder="输出单价/1K" />
         <input type="text" class="b3-text-field tks-pack-models" value="${esc((pack.models || []).join(", "))}" placeholder="涵盖模型，逗号分隔" />
         <button class="b3-button b3-button--small b3-button--danger tks-pack-del" title="删除">✕</button>
@@ -834,7 +837,7 @@ export class SettingsPanel {
     };
 
     const initialRows = Object.entries(prices)
-      .map(([m, p]) => makeRow(m, p.input, p.output, p.cacheRead))
+      .map(([m, p]) => makeRow(m, p.input, p.output, p.cacheRead, p.cacheCreation))
       .join("");
 
     const initialPacks = packs.map((p) => makePackRow(p)).join("");
@@ -858,11 +861,16 @@ export class SettingsPanel {
         <label class="tks-price-opt-label"><input type="checkbox" id="tks-price-packcache" ${packCountCache ? "checked" : ""} /> 资源包模式下缓存命中计入费用</label>
         <span class="tks-price-opt-hint">默认开启。关闭后，由资源包（逐项或打包价模式）匹配到的请求，其缓存命中 tokens 不再计入费用估算，可避免「大量命中缓存」场景下费用被高估；单模型单价配置不受此开关影响。</span>
       </div>
+      <div class="tks-price-opt">
+        <label class="tks-price-opt-label"><input type="checkbox" id="tks-price-reasoning" ${countReasoning ? "checked" : ""} /> 推理 token 计入输出与费用</label>
+        <span class="tks-price-opt-hint">默认开启。开启时输出量与费用按 completion_tokens 全额计（含推理，与绝大多数商家计费口径一致）；关闭后，可计费输出将扣除推理（reasoning/thinking）token 部分，适用于推理 token 单独计费或免费的商家。仪表盘最近请求表会标注每条记录的「含推理」token 数，便于直观区分偏差。</span>
+      </div>
       <div class="tks-price-section-title">按模型单价（模型名不区分大小写，保存时自动归一化为小写）</div>
       <div class="tks-price-header">
         <span class="tks-price-hd-model">模型名称</span>
         <span class="tks-price-hd-input">输入/1K</span>
         <span class="tks-price-hd-cache">缓存命中/1K</span>
+        <span class="tks-price-hd-cachecreate">缓存写入/1K</span>
         <span class="tks-price-hd-output">输出/1K</span>
         <span></span>
       </div>
@@ -877,6 +885,7 @@ export class SettingsPanel {
         <span class="tks-pack-hd-totalprice">打包总价</span>
         <span class="tks-pack-hd-input">输入/1K</span>
         <span class="tks-pack-hd-cache">缓存命中/1K</span>
+        <span class="tks-pack-hd-cachecreate">缓存写入/1K</span>
         <span class="tks-pack-hd-output">输出/1K</span>
         <span class="tks-pack-hd-models">涵盖模型</span>
         <span></span>
@@ -945,8 +954,9 @@ export class SettingsPanel {
           .toLowerCase().trim().replace(/[\s\-_]+/g, "");
         const input = parseFloat((row.querySelector(".tks-price-input") as HTMLInputElement)?.value || "0") || 0;
         const cacheRead = parseFloat((row.querySelector(".tks-price-cache") as HTMLInputElement)?.value || "0") || 0;
+        const cacheCreation = parseFloat((row.querySelector(".tks-price-cachecreate") as HTMLInputElement)?.value || "0") || 0;
         const output = parseFloat((row.querySelector(".tks-price-output") as HTMLInputElement)?.value || "0") || 0;
-        if (model) finalPrices[model] = { input, output, ...(cacheRead > 0 ? { cacheRead } : {}) };
+        if (model) finalPrices[model] = { input, output, ...(cacheRead > 0 ? { cacheRead } : {}), ...(cacheCreation > 0 ? { cacheCreation } : {}) };
       });
       const finalPacks: PricePack[] = [];
       packListEl.querySelectorAll(".tks-pack-row").forEach((row) => {
@@ -956,19 +966,21 @@ export class SettingsPanel {
         const totalPrice = parseFloat((row.querySelector(".tks-pack-totalprice") as HTMLInputElement)?.value || "0") || 0;
         const input = parseFloat((row.querySelector(".tks-pack-input") as HTMLInputElement)?.value || "0") || 0;
         const cacheRead = parseFloat((row.querySelector(".tks-pack-cache") as HTMLInputElement)?.value || "0") || 0;
+        const cacheCreation = parseFloat((row.querySelector(".tks-pack-cachecreate") as HTMLInputElement)?.value || "0") || 0;
         const output = parseFloat((row.querySelector(".tks-pack-output") as HTMLInputElement)?.value || "0") || 0;
         const models = ((row.querySelector(".tks-pack-models") as HTMLInputElement)?.value || "")
           .split(/[,，]/)
           .map((x) => x.toLowerCase().trim().replace(/[\s\-_]+/g, ""))
           .filter(Boolean);
         if (name || models.length > 0) {
-          finalPacks.push({ id, name, totalTokens, ...(totalPrice > 0 ? { totalPrice } : {}), input, output, ...(cacheRead > 0 ? { cacheRead } : {}), models });
+          finalPacks.push({ id, name, totalTokens, ...(totalPrice > 0 ? { totalPrice } : {}), input, output, ...(cacheRead > 0 ? { cacheRead } : {}), ...(cacheCreation > 0 ? { cacheCreation } : {}), models });
         }
       });
       const cur = (container.querySelector("#tks-price-currency") as HTMLSelectElement)?.value || "¥";
       const recalc = (container.querySelector("#tks-price-recalc") as HTMLInputElement)?.checked ?? true;
       const packCountCache = (container.querySelector("#tks-price-packcache") as HTMLInputElement)?.checked ?? true;
-      this.store.updateSettings({ currency: cur, modelPrices: finalPrices, pricePacks: finalPacks, recalcCostOnPriceChange: recalc, packCountCacheRead: packCountCache });
+      const countReasoning = (container.querySelector("#tks-price-reasoning") as HTMLInputElement)?.checked ?? true;
+      this.store.updateSettings({ currency: cur, modelPrices: finalPrices, pricePacks: finalPacks, recalcCostOnPriceChange: recalc, packCountCacheRead: packCountCache, countReasoningInOutput: countReasoning });
       this.store.save();
       dialog.destroy();
       showMessage("费用配置已保存", 2000, "info");

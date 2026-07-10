@@ -157,6 +157,10 @@
   color: var(--b3-theme-on-surface);
   opacity: 0.85;
 }
+.tks-warn {
+  color: #d97706;
+  font-weight: 600;
+}
 
 /* 归档提示条 */
 .tks-archive-note {
@@ -911,7 +915,7 @@
 }
 .tks-price-row {
   display: grid;
-  grid-template-columns: 1fr 100px 100px 100px 36px;
+  grid-template-columns: 1fr 100px 95px 95px 95px 36px;
   gap: 8px;
   align-items: center;
 }
@@ -919,7 +923,7 @@
 /* 按模型单价列表列标题 */
 .tks-price-header {
   display: grid;
-  grid-template-columns: 1fr 100px 100px 100px 36px;
+  grid-template-columns: 1fr 100px 95px 95px 95px 36px;
   gap: 8px;
   align-items: center;
   padding: 4px 0;
@@ -966,7 +970,7 @@
 }
 .tks-pack-row {
   display: grid;
-  grid-template-columns: 1.2fr 90px 90px 70px 70px 70px 1.4fr 36px;
+  grid-template-columns: 1.2fr 90px 90px 70px 70px 70px 70px 1.4fr 36px;
   gap: 8px;
   align-items: center;
 }
@@ -986,7 +990,7 @@
 /* 资源包列表列标题 */
 .tks-pack-header {
   display: grid;
-  grid-template-columns: 1.2fr 90px 90px 70px 70px 70px 1.4fr 36px;
+  grid-template-columns: 1.2fr 90px 90px 70px 70px 70px 70px 1.4fr 36px;
   gap: 8px;
   align-items: center;
   padding: 4px 0;

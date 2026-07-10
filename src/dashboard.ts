@@ -174,6 +174,7 @@ export class Dashboard {
       averageRequestTime: 0,
       totalCost: 0,
       totalCacheReadTokens: 0,
+      totalCacheCreationTokens: 0,
       totalCacheCost: 0,
       exactTokens: 0,
       estimatedTokens: 0,
@@ -191,6 +192,7 @@ export class Dashboard {
       summary.totalOutputTokens += r.outputTokens;
       summary.totalCost += this.store.getRecordCost(r);
       summary.totalCacheReadTokens += r.cacheReadTokens || 0;
+      summary.totalCacheCreationTokens += r.cacheCreationTokens || 0;
       summary.totalCacheCost += this.store.getRecordCacheCost(r);
       totalTime += r.requestTime;
       // 精确值（来自 API usage）与启发式估算分别累计；旧版本记录无 estimated 字段，计入估算
@@ -217,6 +219,7 @@ export class Dashboard {
           inputTokens: 0,
           outputTokens: 0,
           cacheReadTokens: 0,
+          cacheCreationTokens: 0,
           cost: 0,
           cacheCost: 0,
         };
@@ -226,6 +229,7 @@ export class Dashboard {
       summary.modelStats[modelKey].inputTokens += r.inputTokens;
       summary.modelStats[modelKey].outputTokens += r.outputTokens;
       summary.modelStats[modelKey].cacheReadTokens += r.cacheReadTokens || 0;
+      summary.modelStats[modelKey].cacheCreationTokens += r.cacheCreationTokens || 0;
       summary.modelStats[modelKey].cost += this.store.getRecordCost(r);
       summary.modelStats[modelKey].cacheCost += this.store.getRecordCacheCost(r);
     }
@@ -239,6 +243,7 @@ export class Dashboard {
       summary.totalOutputTokens += a.totalOutputTokens;
       summary.totalCost += a.cost;
       summary.totalCacheReadTokens += a.totalCacheReadTokens;
+      summary.totalCacheCreationTokens += a.totalCacheCreationTokens;
       summary.totalCacheCost += a.cacheCost;
       summary.exactTokens += a.exactTokens;
       summary.estimatedTokens += a.estimatedTokens;
@@ -251,6 +256,7 @@ export class Dashboard {
             inputTokens: 0,
             outputTokens: 0,
             cacheReadTokens: 0,
+            cacheCreationTokens: 0,
             cost: 0,
             cacheCost: 0,
           };
@@ -258,6 +264,8 @@ export class Dashboard {
         summary.modelStats[mk].tokens += m.tokens;
         summary.modelStats[mk].inputTokens += m.inputTokens;
         summary.modelStats[mk].outputTokens += m.outputTokens;
+        summary.modelStats[mk].cacheReadTokens += m.cacheReadTokens || 0;
+        summary.modelStats[mk].cacheCreationTokens += m.cacheCreationTokens || 0;
         summary.modelStats[mk].cost += m.cost;
       }
     }
@@ -782,8 +790,8 @@ export class Dashboard {
         ${showDoc ? `<td class="tks-doc-cell" title="${esc(r.docId || "")}">${esc(r.docPath || "—")}</td>` : ""}
         <td>${esc(r.model)}</td>
         <td>${fmtToken(r.inputTokens, numFmt)}</td>
-        <td>${r.cacheReadTokens ? fmtToken(r.cacheReadTokens, numFmt) : "—"}</td>
-        <td>${fmtToken(r.outputTokens, numFmt)}</td>
+        <td>${r.cacheReadTokens ? fmtToken(r.cacheReadTokens, numFmt) : "—"}${r.cacheCreationTokens && r.cacheCreationTokens > 0 ? `<br><span class="tks-sub">写入 ${fmtToken(r.cacheCreationTokens, numFmt)}</span>` : ""}</td>
+        <td>${fmtToken(r.outputTokens, numFmt)}${r.reasoningTokens && r.reasoningTokens > 0 ? `<br><span class="tks-sub">含推理 ${fmtToken(r.reasoningTokens, numFmt)}</span>` : ""}${r.multimodalEstimated ? `<br><span class="tks-sub tks-warn">多模态·估算偏低</span>` : ""}</td>
         <td><strong>${fmtToken(r.totalTokens, numFmt)}</strong></td>
         <td>${this.store.hasAnyPrice() ? `${this.store.formatCost(this.store.getRecordCost(r))}<br><span class="tks-sub">缓存 ${this.store.formatCost(this.store.getRecordCacheCost(r))}</span>` : "—"}</td>
         <td>${r.requestTime}ms</td>
@@ -869,6 +877,9 @@ export class Dashboard {
           inputTokens: r.inputTokens,
           outputTokens: r.outputTokens,
           cacheReadTokens: r.cacheReadTokens ?? 0,
+          cacheCreationTokens: r.cacheCreationTokens ?? 0,
+          reasoningTokens: r.reasoningTokens ?? 0,
+          multimodalEstimated: r.multimodalEstimated ?? false,
           totalTokens: r.totalTokens,
           estimated: r.estimated ?? false,
         },
